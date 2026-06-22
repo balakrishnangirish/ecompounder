@@ -277,7 +277,7 @@ export default function MedicalScribe() {
               <div>
                 <CardTitle>SOAP Note</CardTitle>
                 <CardDescription>
-                  AI-generated structured clinical documentation
+                  Structured clinical documentation
                 </CardDescription>
               </div>
 
