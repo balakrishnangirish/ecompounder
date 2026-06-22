@@ -17,11 +17,14 @@
   },
   "name": "ecompounder",
   "version": "1.0.0",
-  "type": "commonjs",
+  "type": "module",
   "description": "",
   "main": "index.js",
   "scripts": {
     "dev": "next dev --webpack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

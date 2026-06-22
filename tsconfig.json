@@ -6,8 +6,8 @@
         "./*"
       ]
     },
-    "module": "nodenext",
-    "target": "esnext",
+    "module": "esnext",
+    "target": "ES2020",
     "jsx": "react-jsx",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
