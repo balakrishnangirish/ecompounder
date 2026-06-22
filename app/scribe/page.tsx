@@ -35,11 +35,6 @@ export default function MedicalScribe() {
   const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const animationRef = useRef<number | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -57,16 +52,6 @@ export default function MedicalScribe() {
         audio: true,
       });
 
-      // Setup waveform analyser
-      audioContextRef.current = new AudioContext();
-      const source = audioContextRef.current.createMediaStreamSource(stream);
-      const analyser = audioContextRef.current.createAnalyser();
-
-      analyser.fftSize = 256;
-      analyserRef.current = analyser;
-
-      source.connect(analyser);
-
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
 
@@ -83,37 +68,6 @@ export default function MedicalScribe() {
         setAudioBlob(blob);
       };
 
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext("2d");
-
-      const draw = () => {
-        if (!analyserRef.current || !ctx || !canvas) return;
-
-        const bufferLength = analyserRef.current.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-
-        analyserRef.current.getByteFrequencyData(dataArray);
-
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        const barWidth = (canvas.width / bufferLength) * 2;
-
-        let x = 0;
-
-        for (let i = 0; i < bufferLength; i++) {
-          const barHeight = dataArray[i] / 2;
-
-          ctx.fillStyle = "#3b82f6";
-          ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
-
-          x += barWidth + 1;
-        }
-
-        animationRef.current = requestAnimationFrame(draw);
-      };
-
-      draw();
-
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
@@ -129,17 +83,6 @@ export default function MedicalScribe() {
       mediaRecorderRef.current.stream
         .getTracks()
         .forEach((track: any) => track.stop());
-
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-
-      audioContextRef.current = null;
-      analyserRef.current = null;
     }
   };
 
@@ -292,15 +235,6 @@ export default function MedicalScribe() {
                 {isRecording ? <Square /> : <Mic />}
               </Button>
             </div>
-
-            <div className="flex justify-center mt-4">
-              <canvas
-                ref={canvasRef}
-                width={400}
-                height={80}
-                className="border rounded-md bg-white"
-              />
-            </div>
           </CardContent>
         </Card>
 
@@ -312,7 +246,7 @@ export default function MedicalScribe() {
               <div>
                 <CardTitle>Transcript</CardTitle>
                 <CardDescription>
-                  Editable clinical transcript
+                  Conversation transcript
                 </CardDescription>
               </div>
 
