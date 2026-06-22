@@ -235,12 +235,6 @@ export default function MedicalScribe() {
                 {isRecording ? <Square /> : <Mic />}
               </Button>
             </div>
-
-            {audioBlob && (
-              <Button onClick={handleTranscribe} disabled={loadingSTT}>
-                {loadingSTT ? "Transcribing..." : "Generate Transcript"}
-              </Button>
-            )}
           </CardContent>
         </Card>
 
@@ -255,13 +249,43 @@ export default function MedicalScribe() {
               </CardDescription>
             </CardHeader>
 
-            <CardContent>
-              <Textarea
-                className="min-h-[500px]"
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                placeholder="Transcript will appear here..."
-              />
+            <CardContent className="space-y-4">
+              {audioBlob && (
+                <Button onClick={handleTranscribe} disabled={loadingSTT}>
+                  {loadingSTT ? "Transcribing..." : "Generate Transcript"}
+                </Button>
+              )}
+
+              <ScrollArea className="h-[500px] border rounded-md p-4">
+                <div className="text-sm space-y-2 font-mono">
+                  {transcript ? (
+                    transcript.split("\n").map((line, idx) => {
+                      const isPatient = line.toLowerCase().startsWith("patient:");
+                      const isDoctor = line.toLowerCase().startsWith("doctor:");
+
+                      return (
+                        <div key={idx}>
+                          {isPatient ? (
+                            <p>
+                              <span className="font-bold text-green-600">Patient:</span>
+                              <span className="ml-2">{line.replace(/patient:/i, "")}</span>
+                            </p>
+                          ) : isDoctor ? (
+                            <p>
+                              <span className="font-bold text-blue-600">Doctor:</span>
+                              <span className="ml-2">{line.replace(/doctor:/i, "")}</span>
+                            </p>
+                          ) : (
+                            <p>{line}</p>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-slate-400">Transcript will appear here...</p>
+                  )}
+                </div>
+              </ScrollArea>
             </CardContent>
           </Card>
 
