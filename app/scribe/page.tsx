@@ -120,37 +120,44 @@ export default function MedicalScribe() {
   };
 
   // =========================
-  // SOAP GENERATION (HF API)
+  // SOAP GENERATION (GROQ API)
   // =========================
 
   const handleGenerateSOAP = async () => {
     if (!transcript) return;
-
+  
+    setSoapNote("");
     setLoadingLLM(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/generate-soap", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ transcript }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.error || "Failed to generate SOAP note");
-      }
-
-      // IMPORTANT: HF route returns `soap`
-      setSoapNote(data.soap || "");
-    } catch (err: any) {
-      setError(`SOAP Generation Error: ${err.message}`);
-    } finally {
-      setLoadingLLM(false);
+  
+    const res = await fetch("/api/generate-soap-stream", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ transcript }),
+    });
+  
+    if (!res.body) {
+      throw new Error("No stream received");
     }
+  
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+  
+    let done = false;
+  
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      done = doneReading;
+  
+      const chunk = decoder.decode(value || new Uint8Array(), {
+        stream: true,
+      });
+  
+      setSoapNote((prev) => prev + chunk);
+    }
+  
+    setLoadingLLM(false);
   };
 
   // =========================
