@@ -5,8 +5,6 @@ import { v4 as uuidv4 } from "uuid";
 import ffmpegPath from "ffmpeg-static";
 import { exec } from "child_process";
 
-exec(`"${ffmpegPath}" -i input.wav output.mp3`);
-
 export const runtime = "nodejs";
 
 const CHUNK_SIZE_SECONDS = 25;
@@ -61,14 +59,15 @@ async function splitAudio(inputPath: string, outputDir: string, jobId: string) {
   console.log(`[${jobId}] STEP 3: starting ffmpeg chunking`);
 
   const cmd = `
-    ffmpeg -i "${inputPath}" \
-    -ac 1 \
-    -ar 16000 \
-    -c:a pcm_s16le \
-    -f segment \
-    -segment_time ${CHUNK_SIZE_SECONDS} \
-    "${outputDir}/chunk_%03d.wav"
-  `;
+  "${ffmpegPath}" -i "${inputPath}" \
+  -ac 1 \
+  -ar 16000 \
+  -c:a pcm_s16le \
+  -f segment \
+  -segment_time ${CHUNK_SIZE_SECONDS} \
+  "${outputDir}/chunk_%03d.wav"
+`;
+
 
   const result = await run(cmd);
 
