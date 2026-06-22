@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import ffmpegPath from "ffmpeg-static";
 import { exec } from "child_process";
+
+exec(`"${ffmpegPath}" -i input.wav output.mp3`);
 
 export const runtime = "nodejs";
 
