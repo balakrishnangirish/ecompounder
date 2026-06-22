@@ -13,21 +13,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const prompt = `
-You are a clinical AI assistant.
-
-Convert this transcript into a structured SOAP note:
-
-FORMAT:
-- Subjective
-- Objective
-- Assessment
-- Plan
-
-Transcript:
-${transcript}
-`;
-
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
@@ -38,72 +23,65 @@ ${transcript}
         },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
+          temperature: 0.1,
           messages: [
             {
               role: "system",
-              content:
-                "You are a precise clinical documentation assistant.",
+              content: `
+You are a clinical documentation engine.
+
+OUTPUT RULES (STRICT):
+- Output ONLY valid JSON
+- No markdown
+- No commentary
+- No extra text
+
+Return EXACTLY this format:
+
+{
+  "subjective": "",
+  "objective": "",
+  "assessment": "",
+  "plan": ""
+}
+
+If unknown, use "".
+              `.trim(),
             },
             {
               role: "user",
-              content: prompt,
+              content: `TRANSCRIPT:\n${transcript}\n\nReturn ONLY JSON.`,
             },
           ],
-          temperature: 0.2,
-          stream: true,
         }),
       }
     );
 
-    if (!response.body) {
-      throw new Error("No response body from Groq");
+    const data = await response.json();
+
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (!content) {
+      return NextResponse.json(
+        { error: "No model output" },
+        { status: 500 }
+      );
     }
 
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
+    // Hard JSON extraction safety layer
+    const start = content.indexOf("{");
+    const end = content.lastIndexOf("}");
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        const reader = response.body!.getReader();
+    if (start === -1 || end === -1) {
+      return NextResponse.json(
+        { error: "Invalid JSON returned by model", raw: content },
+        { status: 500 }
+      );
+    }
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+    const json = JSON.parse(content.slice(start, end + 1));
 
-          const chunk = decoder.decode(value, { stream: true });
-
-          // Groq streams OpenAI-style SSE chunks
-          const lines = chunk
-            .split("\n")
-            .filter((l) => l.startsWith("data: "));
-
-          for (const line of lines) {
-            const data = line.replace("data: ", "").trim();
-
-            if (data === "[DONE]") continue;
-
-            try {
-              const json = JSON.parse(data);
-              const token = json?.choices?.[0]?.delta?.content;
-
-              if (token) {
-                controller.enqueue(encoder.encode(token));
-              }
-            } catch {}
-          }
-        }
-
-        controller.close();
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return NextResponse.json(json);
   } catch (err: any) {
     return NextResponse.json(
       { error: err.message },

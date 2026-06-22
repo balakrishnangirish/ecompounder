@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+// Tabs removed (UI simplified to 2-column layout)
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
@@ -26,7 +26,7 @@ export default function MedicalScribe() {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   const [transcript, setTranscript] = useState("");
-  const [soapNote, setSoapNote] = useState("");
+  const [soapNote, setSoapNote] = useState<any>(null);
 
   const [loadingSTT, setLoadingSTT] = useState(false);
   const [loadingLLM, setLoadingLLM] = useState(false);
@@ -125,39 +125,58 @@ export default function MedicalScribe() {
 
   const handleGenerateSOAP = async () => {
     if (!transcript) return;
-  
-    setSoapNote("");
+
+    setSoapNote(null);
     setLoadingLLM(true);
-  
-    const res = await fetch("/api/generate-soap-stream", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ transcript }),
-    });
-  
-    if (!res.body) {
-      throw new Error("No stream received");
-    }
-  
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-  
-    let done = false;
-  
-    while (!done) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
-  
-      const chunk = decoder.decode(value || new Uint8Array(), {
-        stream: true,
+
+    try {
+      const res = await fetch("/api/generate-soap-stream", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ transcript }),
       });
-  
-      setSoapNote((prev) => prev + chunk);
+
+      if (!res.body) {
+        throw new Error("No stream received");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+
+      let fullText = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        fullText += decoder.decode(value, { stream: true });
+      }
+
+      // Extract JSON if model returns extra text
+      const jsonStart = fullText.indexOf("{");
+      const jsonEnd = fullText.lastIndexOf("}");
+
+      if (jsonStart === -1 || jsonEnd === -1) {
+        throw new Error("Invalid SOAP JSON returned by model");
+      }
+
+      const jsonString = fullText.slice(jsonStart, jsonEnd + 1);
+      const parsed = JSON.parse(jsonString);
+
+      setSoapNote(parsed);
+    } catch (err: any) {
+      console.error(err);
+      setSoapNote({
+        subjective: "Error generating SOAP",
+        objective: "",
+        assessment: "",
+        plan: "",
+      });
+    } finally {
+      setLoadingLLM(false);
     }
-  
-    setLoadingLLM(false);
   };
 
   // =========================
@@ -196,99 +215,101 @@ export default function MedicalScribe() {
       )}
 
       <main className="max-w-6xl mx-auto space-y-6">
-        <Tabs defaultValue="record">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="record">Record</TabsTrigger>
-            <TabsTrigger value="transcript">Transcript</TabsTrigger>
-            <TabsTrigger value="soap">SOAP Note</TabsTrigger>
-          </TabsList>
+        {/* Recorder section */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Recorder</CardTitle>
+            <CardDescription>
+              Capture patient consultation audio
+            </CardDescription>
+          </CardHeader>
 
-          {/* RECORD */}
-          <TabsContent value="record">
-            <Card>
-              <CardHeader>
-                <CardTitle>Recorder</CardTitle>
+          <CardContent className="space-y-6">
+            <div className="flex justify-center">
+              <Button
+                onClick={isRecording ? stopRecording : startRecording}
+                size="lg"
+                variant={isRecording ? "destructive" : "default"}
+                className="h-16 w-16 rounded-full"
+              >
+                {isRecording ? <Square /> : <Mic />}
+              </Button>
+            </div>
+
+            {audioBlob && (
+              <Button onClick={handleTranscribe} disabled={loadingSTT}>
+                {loadingSTT ? "Transcribing..." : "Generate Transcript"}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Two-column layout for Transcript and SOAP */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* LEFT COLUMN — Transcript */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Transcript</CardTitle>
+              <CardDescription>
+                Editable clinical transcript
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent>
+              <Textarea
+                className="min-h-[500px]"
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                placeholder="Transcript will appear here..."
+              />
+            </CardContent>
+          </Card>
+
+          {/* RIGHT COLUMN — SOAP */}
+          <Card>
+            <CardHeader className="flex flex-row justify-between items-center">
+              <div>
+                <CardTitle>SOAP Note</CardTitle>
                 <CardDescription>
-                  Capture patient consultation audio
+                  AI-generated structured clinical documentation
                 </CardDescription>
-              </CardHeader>
+              </div>
 
-              <CardContent className="space-y-6">
-                <div className="flex justify-center">
-                  <Button
-                    onClick={isRecording ? stopRecording : startRecording}
-                    size="lg"
-                    variant={isRecording ? "destructive" : "default"}
-                    className="h-16 w-16 rounded-full"
-                  >
-                    {isRecording ? <Square /> : <Mic />}
-                  </Button>
-                </div>
+              <Button
+                onClick={handleGenerateSOAP}
+                disabled={!transcript || loadingLLM}
+              >
+                {loadingLLM ? "Generating..." : "Generate SOAP"}
+              </Button>
+            </CardHeader>
 
-                {audioBlob && (
-                  <Button
-                    onClick={handleTranscribe}
-                    disabled={loadingSTT}
-                  >
-                    {loadingSTT
-                      ? "Transcribing..."
-                      : "Generate Transcript"}
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+            <CardContent>
+              <div className="space-y-4 h-[500px] overflow-y-auto border p-4 rounded-md text-sm font-mono">
 
-          {/* TRANSCRIPT */}
-          <TabsContent value="transcript">
-            <Card>
-              <CardHeader>
-                <CardTitle>Transcript</CardTitle>
-                <CardDescription>
-                  Review and edit transcript
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent>
-                <Textarea
-                  className="min-h-[300px]"
-                  value={transcript}
-                  onChange={(e) => setTranscript(e.target.value)}
-                  placeholder="Transcript will appear here..."
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* SOAP */}
-          <TabsContent value="soap">
-            <Card>
-              <CardHeader className="flex flex-row justify-between">
                 <div>
-                  <CardTitle>SOAP Note</CardTitle>
-                  <CardDescription>
-                    AI-generated clinical documentation
-                  </CardDescription>
+                  <h3 className="font-bold text-blue-600">Subjective</h3>
+                  <p>{soapNote?.subjective || "—"}</p>
                 </div>
 
-                <Button
-                  onClick={handleGenerateSOAP}
-                  disabled={!transcript || loadingLLM}
-                >
-                  {loadingLLM ? "Generating..." : "Generate SOAP"}
-                </Button>
-              </CardHeader>
+                <div>
+                  <h3 className="font-bold text-blue-600">Objective</h3>
+                  <p>{soapNote?.objective || "—"}</p>
+                </div>
 
-              <CardContent>
-                <ScrollArea className="h-[350px] border p-4 rounded-md">
-                  <pre className="whitespace-pre-wrap text-sm">
-                    {soapNote || "SOAP note will appear here..."}
-                  </pre>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+                <div>
+                  <h3 className="font-bold text-blue-600">Assessment</h3>
+                  <p>{soapNote?.assessment || "—"}</p>
+                </div>
+
+                <div>
+                  <h3 className="font-bold text-blue-600">Plan</h3>
+                  <p>{soapNote?.plan || "—"}</p>
+                </div>
+
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </main>
     </div>
   );
