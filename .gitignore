@@ -1,0 +1,24 @@
+# env
+.env.local
+.env
+
+# local model files
+/models
+app.py
+
+# ML models (NEVER commit)
+*.gguf
+*.bin
+*.pt
+*.onnx
+models/
+
+# large artifacts
+tmp/
+uploads/
+
+# next
+.next/
+node_modules/*.gguf
+node_modules
+.next
