@@ -32,12 +32,28 @@ export default function MedicalScribe() {
   const [loadingLLM, setLoadingLLM] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [recordingTime, setRecordingTime] = useState(0);
+
   const mediaRecorderRef = useRef<any>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isRecording]);
 
   // =========================
   // RECORDING
@@ -46,6 +62,7 @@ export default function MedicalScribe() {
   const startRecording = async () => {
     setError(null);
     audioChunksRef.current = [];
+    setRecordingTime(0);
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -79,6 +96,7 @@ export default function MedicalScribe() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      setRecordingTime(0);
 
       mediaRecorderRef.current.stream
         .getTracks()
@@ -193,6 +211,14 @@ export default function MedicalScribe() {
     );
   }
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}`;
+  };
+
   // =========================
   // UI
   // =========================
@@ -215,25 +241,42 @@ export default function MedicalScribe() {
       )}
 
       <main className="max-w-6xl mx-auto space-y-6">
-        {/* Recorder section */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Recorder</CardTitle>
-            <CardDescription>
-              Capture patient consultation audio
-            </CardDescription>
+        {/* Recorder Control Bar */}
+        <Card className="mb-4">
+          <CardHeader className="py-2 pb-0">
+            <CardTitle className="text-base">Recorder</CardTitle>
+            <CardDescription>Capture patient consultation</CardDescription>
           </CardHeader>
-
-          <CardContent className="space-y-6">
-            <div className="flex justify-center">
+          <CardContent className="pt-2 pb-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
               <Button
                 onClick={isRecording ? stopRecording : startRecording}
                 size="lg"
                 variant={isRecording ? "destructive" : "default"}
-                className="h-16 w-16 rounded-full"
+                className={`h-14 w-14 rounded-full flex items-center justify-center transition-transform active:scale-95 hover:scale-105 ${
+                  isRecording ? "animate-pulse bg-red-600" : ""
+                }`}
               >
-                {isRecording ? <Square /> : <Mic />}
+                {isRecording ? (
+                  <Square className="!w-6 !h-6" />
+                ) : (
+                  <Mic className="!w-6 !h-6" />
+                )}
               </Button>
+
+              <div className="text-sm text-slate-600 font-medium">
+                {isRecording
+                  ? `Recording • ${formatTime(recordingTime)}`
+                  : audioBlob
+                  ? "Recording ready"
+                  : "Ready to record"}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">
+                {audioBlob ? "Audio captured" : "No audio"}
+              </Badge>
             </div>
           </CardContent>
         </Card>
