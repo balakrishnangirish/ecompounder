@@ -22,3 +22,5 @@ uploads/
 node_modules/*.gguf
 node_modules
 .next
+
+/generated/prisma

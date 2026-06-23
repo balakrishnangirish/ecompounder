@@ -13,6 +13,13 @@ export async function POST(req: Request) {
       );
     }
 
+    if (!process.env.GROQ_API_KEY) {
+      return NextResponse.json(
+        { error: "Missing GROQ_API_KEY" },
+        { status: 500 }
+      );
+    }
+
     const response = await fetch(
       "https://api.groq.com/openai/v1/chat/completions",
       {
