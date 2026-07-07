@@ -44,6 +44,17 @@ type SoapNote = {
 type SoapStatus = "empty" | "draft" | "final";
 type EditStatus = "clean" | "unsaved" | "saved";
 type DiarizationStatus = "idle" | "processing" | "ready" | "error";
+type SpeakerRole = "Doctor" | "Patient" | "Speaker";
+type RoleStatus =
+  | "idle"
+  | "suggesting"
+  | "needs-confirmation"
+  | "confirmed";
+
+type DiarizedEntry = {
+  speaker_id?: string;
+  transcript?: string;
+};
 
 type Patient = {
   id: string;
@@ -109,6 +120,48 @@ function createWavBlob(chunks: ArrayBuffer[], sampleRate = 16000) {
   return new Blob([header, pcm], { type: "audio/wav" });
 }
 
+function getSpeakerIds(entries: DiarizedEntry[], transcript: string) {
+  const ids = new Set<string>();
+
+  for (const entry of entries) {
+    if (entry.speaker_id) ids.add(entry.speaker_id);
+  }
+
+  for (const line of transcript.split("\n")) {
+    const speaker = line.match(/^([^:]+):/)?.[1]?.trim();
+    if (speaker) ids.add(speaker);
+  }
+
+  return Array.from(ids);
+}
+
+function buildDefaultRoleMap(speakers: string[]) {
+  return speakers.reduce<Record<string, SpeakerRole>>((roles, speaker, index) => {
+    roles[speaker] =
+      index === 0 ? "Doctor" : index === 1 ? "Patient" : "Speaker";
+    return roles;
+  }, {});
+}
+
+function applySpeakerRoles(
+  transcript: string,
+  roles: Record<string, SpeakerRole>
+) {
+  return transcript
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^([^:]+):(.*)$/);
+      if (!match) return line;
+
+      const speaker = match[1].trim();
+      const text = match[2].trim();
+      const role = roles[speaker] || speaker;
+
+      return `${role}: ${text}`;
+    })
+    .join("\n");
+}
+
 export default function MedicalScribe() {
   const [mounted, setMounted] = useState(false);
 
@@ -138,6 +191,12 @@ export default function MedicalScribe() {
   const [diarizationStatus, setDiarizationStatus] =
     useState<DiarizationStatus>("idle");
   const [diarizationMessage, setDiarizationMessage] = useState("");
+  const [rawDiarizedTranscript, setRawDiarizedTranscript] = useState("");
+  const [speakerIds, setSpeakerIds] = useState<string[]>([]);
+  const [speakerRoles, setSpeakerRoles] = useState<
+    Record<string, SpeakerRole>
+  >({});
+  const [roleStatus, setRoleStatus] = useState<RoleStatus>("idle");
 
   const [error, setError] = useState<string | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -226,6 +285,10 @@ export default function MedicalScribe() {
     setEditStatus("clean");
     setDiarizationStatus("idle");
     setDiarizationMessage("");
+    setRawDiarizedTranscript("");
+    setSpeakerIds([]);
+    setSpeakerRoles({});
+    setRoleStatus("idle");
     pcmRecordingChunksRef.current = [];
 
     if (!patient || !encounter) {
@@ -388,10 +451,30 @@ export default function MedicalScribe() {
         throw new Error(data?.error || "Diarization failed");
       }
 
-      setFinalTranscript(data.transcript || "");
+      const rawTranscript = data.transcript || "";
+      const speakers = getSpeakerIds(data.entries || [], rawTranscript);
+      const fallbackRoles = buildDefaultRoleMap(speakers);
+
+      setRawDiarizedTranscript(rawTranscript);
+      setSpeakerIds(speakers);
+      setSpeakerRoles(fallbackRoles);
+      setRoleStatus(speakers.length > 0 ? "suggesting" : "idle");
+      setFinalTranscript(
+        speakers.length > 0
+          ? applySpeakerRoles(rawTranscript, fallbackRoles)
+          : rawTranscript
+      );
       setInterimTranscript("");
       setDiarizationStatus("ready");
-      setDiarizationMessage("Speaker-separated transcript ready.");
+      setDiarizationMessage(
+        speakers.length > 0
+          ? "Speaker-separated transcript ready. Confirm speaker roles before generating SOAP."
+          : "Speaker-separated transcript ready."
+      );
+
+      if (speakers.length > 0) {
+        void inferSpeakerRoles(rawTranscript, speakers, fallbackRoles);
+      }
 
       if (soapStatus !== "final") {
         setSoapNote(EMPTY_SOAP);
@@ -406,6 +489,66 @@ export default function MedicalScribe() {
         err?.message || "Could not finalize speaker-separated transcript."
       );
     }
+  };
+
+  const inferSpeakerRoles = async (
+    transcript: string,
+    speakers: string[],
+    fallbackRoles: Record<string, SpeakerRole>
+  ) => {
+    try {
+      const res = await fetch("/api/infer-speaker-roles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          transcript,
+          speakers,
+          patientName: patient?.fullName || "",
+        }),
+      });
+
+      const data = await res.json();
+      const roles = res.ok ? data.roles || fallbackRoles : fallbackRoles;
+
+      setSpeakerRoles(roles);
+      setFinalTranscript(applySpeakerRoles(transcript, roles));
+      setRoleStatus("needs-confirmation");
+      setDiarizationMessage("Suggested speaker roles. Confirm or swap before generating SOAP.");
+    } catch (err) {
+      console.error(err);
+      setSpeakerRoles(fallbackRoles);
+      setFinalTranscript(applySpeakerRoles(transcript, fallbackRoles));
+      setRoleStatus("needs-confirmation");
+      setDiarizationMessage("Default speaker roles applied. Confirm or swap before generating SOAP.");
+    }
+  };
+
+  const handleSwapSpeakerRoles = () => {
+    if (speakerIds.length < 2 || !rawDiarizedTranscript) return;
+
+    const [firstSpeaker, secondSpeaker] = speakerIds;
+    const nextRoles = {
+      ...speakerRoles,
+      [firstSpeaker]: speakerRoles[secondSpeaker] || "Patient",
+      [secondSpeaker]: speakerRoles[firstSpeaker] || "Doctor",
+    };
+
+    setSpeakerRoles(nextRoles);
+    setFinalTranscript(applySpeakerRoles(rawDiarizedTranscript, nextRoles));
+    setRoleStatus("needs-confirmation");
+    setDiarizationMessage("Speaker roles swapped. Confirm when correct.");
+  };
+
+  const handleConfirmSpeakerRoles = () => {
+    if (!rawDiarizedTranscript) return;
+
+    setFinalTranscript(
+      applySpeakerRoles(rawDiarizedTranscript, speakerRoles)
+    );
+    setRoleStatus("confirmed");
+    setDiarizationMessage("Speaker roles confirmed.");
   };
 
   const stopRecording = () => {
@@ -756,6 +899,63 @@ export default function MedicalScribe() {
                 {diarizationMessage}
               </div>
             )}
+            {speakerIds.length > 0 &&
+              roleStatus !== "idle" &&
+              roleStatus !== "confirmed" && (
+                <div className="mb-3 rounded-md border bg-slate-50 p-3">
+                  <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        Confirm Speaker Roles
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        Suggested from the diarized transcript.
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleSwapSpeakerRoles}
+                        disabled={speakerIds.length < 2}
+                      >
+                        Swap Roles
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        onClick={handleConfirmSpeakerRoles}
+                        disabled={roleStatus === "suggesting"}
+                      >
+                        Confirm Roles
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {speakerIds.map((speaker) => (
+                      <div
+                        key={speaker}
+                        className="flex items-center justify-between rounded border bg-white px-3 py-2"
+                      >
+                        <span className="font-mono text-xs text-slate-500">
+                          {speaker}
+                        </span>
+                        <Badge variant="secondary">
+                          {speakerRoles[speaker] || "Speaker"}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            {roleStatus === "confirmed" && speakerIds.length > 0 && (
+              <div className="mb-3 flex items-center justify-between rounded-md border bg-green-50 px-3 py-2 text-xs text-green-700">
+                <span>Speaker roles confirmed</span>
+                <Badge variant="secondary">Doctor / Patient</Badge>
+              </div>
+            )}
             <Textarea
               className="h-[520px]"
               value={[finalTranscript, interimTranscript]
@@ -793,7 +993,9 @@ export default function MedicalScribe() {
                     !currentTranscript ||
                     loadingLLM ||
                     soapStatus === "final" ||
-                    diarizationStatus === "processing"
+                    diarizationStatus === "processing" ||
+                    roleStatus === "suggesting" ||
+                    roleStatus === "needs-confirmation"
                   }
                   className="w-full sm:w-auto"
                 >
