@@ -2,7 +2,7 @@ services:
   - type: web
     name: ecompounder-live-translation-ws
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm ci
     startCommand: npm run live:server
     healthCheckPath: /healthz
