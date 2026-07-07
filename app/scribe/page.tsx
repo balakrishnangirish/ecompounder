@@ -43,6 +43,7 @@ type SoapNote = {
 
 type SoapStatus = "empty" | "draft" | "final";
 type EditStatus = "clean" | "unsaved" | "saved";
+type DiarizationStatus = "idle" | "processing" | "ready" | "error";
 
 type Patient = {
   id: string;
@@ -66,6 +67,47 @@ const EMPTY_SOAP: SoapNote = {
 
 const LIVE_WS_URL =
   process.env.NEXT_PUBLIC_LIVE_WS_URL || "ws://localhost:3001";
+
+function mergeArrayBuffers(chunks: ArrayBuffer[]) {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const merged = new Uint8Array(total);
+  let offset = 0;
+
+  for (const chunk of chunks) {
+    merged.set(new Uint8Array(chunk), offset);
+    offset += chunk.byteLength;
+  }
+
+  return merged;
+}
+
+function createWavBlob(chunks: ArrayBuffer[], sampleRate = 16000) {
+  const pcm = mergeArrayBuffers(chunks);
+  const header = new ArrayBuffer(44);
+  const view = new DataView(header);
+
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) {
+      view.setUint8(offset + i, value.charCodeAt(i));
+    }
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + pcm.byteLength, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, pcm.byteLength, true);
+
+  return new Blob([header, pcm], { type: "audio/wav" });
+}
 
 export default function MedicalScribe() {
   const [mounted, setMounted] = useState(false);
@@ -93,6 +135,9 @@ export default function MedicalScribe() {
   >([]);
   const [editStatus, setEditStatus] = useState<EditStatus>("clean");
   const [loadingLLM, setLoadingLLM] = useState(false);
+  const [diarizationStatus, setDiarizationStatus] =
+    useState<DiarizationStatus>("idle");
+  const [diarizationMessage, setDiarizationMessage] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -101,6 +146,7 @@ export default function MedicalScribe() {
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const flushTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pcmRecordingChunksRef = useRef<ArrayBuffer[]>([]);
   const transcriptRef = useRef("");
   const loadingLLMRef = useRef(false);
 
@@ -178,6 +224,9 @@ export default function MedicalScribe() {
     setSoapStatus("empty");
     setEditedSoapFields([]);
     setEditStatus("clean");
+    setDiarizationStatus("idle");
+    setDiarizationMessage("");
+    pcmRecordingChunksRef.current = [];
 
     if (!patient || !encounter) {
       setError("Please add a patient before starting recording.");
@@ -268,6 +317,7 @@ export default function MedicalScribe() {
 
       worklet.port.onmessage = (event) => {
         pcmQueue.push(event.data);
+        pcmRecordingChunksRef.current.push(event.data.slice(0));
 
         if (flushTimerRef.current) return;
 
@@ -316,6 +366,48 @@ export default function MedicalScribe() {
   // =========================
   // STOP
   // =========================
+  const processDiarizedTranscript = async (audioBlob: Blob) => {
+    if (audioBlob.size === 0) return;
+
+    setDiarizationStatus("processing");
+    setDiarizationMessage("Finalizing speaker-separated transcript...");
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", audioBlob, "encounter.wav");
+      formData.append("numSpeakers", "2");
+
+      const res = await fetch("/api/diarize-translation", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Diarization failed");
+      }
+
+      setFinalTranscript(data.transcript || "");
+      setInterimTranscript("");
+      setDiarizationStatus("ready");
+      setDiarizationMessage("Speaker-separated transcript ready.");
+
+      if (soapStatus !== "final") {
+        setSoapNote(EMPTY_SOAP);
+        setSoapStatus("empty");
+        setEditedSoapFields([]);
+        setEditStatus("clean");
+      }
+    } catch (err: any) {
+      console.error(err);
+      setDiarizationStatus("error");
+      setDiarizationMessage(
+        err?.message || "Could not finalize speaker-separated transcript."
+      );
+    }
+  };
+
   const stopRecording = () => {
     setIsRecording(false);
 
@@ -334,6 +426,11 @@ export default function MedicalScribe() {
     audioContextRef.current = null;
 
     setSocketConnected(false);
+
+    if (pcmRecordingChunksRef.current.length > 0) {
+      const wavBlob = createWavBlob(pcmRecordingChunksRef.current);
+      void processDiarizedTranscript(wavBlob);
+    }
   };
 
   const generateSOAP = async () => {
@@ -636,8 +733,16 @@ export default function MedicalScribe() {
 
           <CardContent>
             <div className="mb-3 flex items-center justify-between">
-              <Badge variant="secondary">
-                Live English Translation
+              <Badge
+                variant={
+                  diarizationStatus === "ready" ? "default" : "secondary"
+                }
+              >
+                {diarizationStatus === "processing"
+                  ? "Finalizing speakers..."
+                  : diarizationStatus === "ready"
+                  ? "Speaker-separated"
+                  : "Live English Translation"}
               </Badge>
 
               {patient && (
@@ -646,6 +751,11 @@ export default function MedicalScribe() {
                 </div>
               )}
             </div>
+            {diarizationMessage && (
+              <div className="mb-3 text-xs text-slate-500">
+                {diarizationMessage}
+              </div>
+            )}
             <Textarea
               className="h-[520px]"
               value={[finalTranscript, interimTranscript]
@@ -680,7 +790,10 @@ export default function MedicalScribe() {
                 <Button
                   onClick={() => generateSOAP()}
                   disabled={
-                    !currentTranscript || loadingLLM || soapStatus === "final"
+                    !currentTranscript ||
+                    loadingLLM ||
+                    soapStatus === "final" ||
+                    diarizationStatus === "processing"
                   }
                   className="w-full sm:w-auto"
                 >
