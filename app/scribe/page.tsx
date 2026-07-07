@@ -587,6 +587,14 @@ export default function MedicalScribe() {
     if (soapStatus === "final") return false;
     if (loadingLLMRef.current) return false;
 
+    if (
+      speakerIds.length > 0 &&
+      roleStatus !== "confirmed"
+    ) {
+      setError("Please confirm speaker roles before generating SOAP notes.");
+      return false;
+    }
+
     setError(null);
     setLoadingLLM(true);
 
