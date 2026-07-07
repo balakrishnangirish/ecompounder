@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: ecompounder-live-translation-ws
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npm run live:server
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: API_KEY
+        sync: false

@@ -1,9 +1,10 @@
 import WebSocket, { WebSocketServer } from "ws";
 import dotenv from "dotenv";
+import { createServer } from "http";
 
 dotenv.config();
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT || 3001);
 const API_KEY = process.env.API_KEY;
 
 if (!API_KEY) {
@@ -21,8 +22,22 @@ function logSarvamMessage(message) {
   }
 }
 
-const wss = new WebSocketServer({ port: PORT });
-console.log(`🎙 Live translation server running on ws://localhost:${PORT}`);
+const server = createServer((req, res) => {
+  if (req.url === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("E-Compounder live translation websocket server");
+});
+
+const wss = new WebSocketServer({ server });
+
+server.listen(PORT, () => {
+  console.log(`🎙 Live translation server running on port ${PORT}`);
+});
 
 wss.on("connection", (clientSocket) => {
   console.log("Frontend connected");

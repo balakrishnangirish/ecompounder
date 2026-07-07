@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Mic, Square, AlertCircle } from "lucide-react";
+import {
+  Mic,
+  Square,
+  AlertCircle,
+  UserPlus,
+  User,
+} from "lucide-react";
 
 import {
   Card,
@@ -16,6 +22,18 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 type SoapNote = {
   subjective: string;
   objective: string;
@@ -26,6 +44,19 @@ type SoapNote = {
 type SoapStatus = "empty" | "draft" | "final";
 type EditStatus = "clean" | "unsaved" | "saved";
 
+type Patient = {
+  id: string;
+  fullName: string;
+  dob?: string;
+  phone?: string;
+};
+
+type Encounter = {
+  id: string;
+  startedAt: string;
+  patientId: string;
+};
+
 const EMPTY_SOAP: SoapNote = {
   subjective: "",
   objective: "",
@@ -33,8 +64,21 @@ const EMPTY_SOAP: SoapNote = {
   plan: "",
 };
 
+const LIVE_WS_URL =
+  process.env.NEXT_PUBLIC_LIVE_WS_URL || "ws://localhost:3001";
+
 export default function MedicalScribe() {
   const [mounted, setMounted] = useState(false);
+
+  const [patientDialogOpen, setPatientDialogOpen] =
+    useState(false);
+
+  const [patientName, setPatientName] = useState("");
+  const [patientDOB, setPatientDOB] = useState("");
+  const [patientPhone, setPatientPhone] = useState("");
+
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [encounter, setEncounter] = useState<Encounter | null>(null);
 
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -91,6 +135,37 @@ export default function MedicalScribe() {
     };
   }, [isRecording]);
 
+  const handleCreatePatient = () => {
+    if (!patientName.trim()) {
+      setError("Patient name is required.");
+      return;
+    }
+
+    const newPatient: Patient = {
+      id: crypto.randomUUID(),
+      fullName: patientName,
+      dob: patientDOB,
+      phone: patientPhone,
+    };
+
+    const newEncounter: Encounter = {
+      id: crypto.randomUUID(),
+      startedAt: new Date().toISOString(),
+      patientId: newPatient.id,
+    };
+
+    setPatient(newPatient);
+    setEncounter(newEncounter);
+
+    setPatientDialogOpen(false);
+
+    setPatientName("");
+    setPatientDOB("");
+    setPatientPhone("");
+
+    setError(null);
+  };
+
   // =========================
   // START RECORDING
   // =========================
@@ -104,13 +179,18 @@ export default function MedicalScribe() {
     setEditedSoapFields([]);
     setEditStatus("clean");
 
+    if (!patient || !encounter) {
+      setError("Please add a patient before starting recording.");
+      return;
+    }
+
     try {
       // ---------------- WS ----------------
       if (
         !websocketRef.current ||
         websocketRef.current.readyState === WebSocket.CLOSED
       ) {
-        websocketRef.current = new WebSocket("ws://localhost:3001");
+        websocketRef.current = new WebSocket(LIVE_WS_URL);
 
         websocketRef.current.onopen = () => setSocketConnected(true);
         websocketRef.current.onclose = () => setSocketConnected(false);
@@ -276,7 +356,11 @@ export default function MedicalScribe() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ transcript }),
+        body: JSON.stringify({
+          transcript,
+          patient,
+          encounter,
+        }),
       });
 
       const data = await res.json();
@@ -381,14 +465,89 @@ export default function MedicalScribe() {
 
   return (
     <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <header className="flex justify-between mb-6">
-        <h1 className="text-xl font-bold text-blue-600">
-          E-Compounder AI Scribe
-        </h1>
+      <Dialog
+        open={patientDialogOpen}
+        onOpenChange={setPatientDialogOpen}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Start New Encounter</DialogTitle>
 
-        <Badge variant={socketConnected ? "default" : "secondary"}>
-          {socketConnected ? "Live" : "Offline"}
-        </Badge>
+            <DialogDescription>
+              Add lightweight patient details before recording.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="patient-name">Patient Name</Label>
+
+              <Input
+                id="patient-name"
+                placeholder="Jane Doe"
+                value={patientName}
+                onChange={(e) => setPatientName(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="patient-dob">Date of Birth</Label>
+
+              <Input
+                id="patient-dob"
+                type="date"
+                value={patientDOB}
+                onChange={(e) => setPatientDOB(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="patient-phone">
+                Phone (Optional)
+              </Label>
+
+              <Input
+                id="patient-phone"
+                placeholder="+91..."
+                value={patientPhone}
+                onChange={(e) => setPatientPhone(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button onClick={handleCreatePatient}>
+              Create & Start Encounter
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <header className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-blue-600">
+            E-Compounder AI Scribe
+          </h1>
+
+          <p className="text-sm text-slate-500 mt-1">
+            Ambient clinical documentation workspace
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setPatientDialogOpen(true)}
+            className="gap-2"
+          >
+            <UserPlus className="h-4 w-4" />
+            {patient ? "Switch Patient" : "Add Patient"}
+          </Button>
+
+          <Badge variant={socketConnected ? "default" : "secondary"}>
+            {socketConnected ? "Live" : "Offline"}
+          </Badge>
+        </div>
       </header>
 
       {error && (
@@ -396,6 +555,40 @@ export default function MedicalScribe() {
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+      )}
+
+      {patient && encounter && (
+        <Card className="mb-6 border-blue-100 bg-blue-50/40">
+          <CardContent className="flex flex-col gap-4 py-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-blue-100 p-2">
+                <User className="h-5 w-5 text-blue-600" />
+              </div>
+
+              <div>
+                <p className="font-semibold text-slate-900">
+                  {patient.fullName}
+                </p>
+
+                <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                  {patient.dob && <span>DOB: {patient.dob}</span>}
+
+                  {patient.phone && (
+                    <span>Phone: {patient.phone}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-left md:text-right">
+              <Badge variant="outline">Encounter Active</Badge>
+
+              <p className="mt-2 text-xs font-mono text-slate-500">
+                Encounter ID: {encounter.id.slice(0, 8)}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ================= RECORDER ================= */}
@@ -442,6 +635,17 @@ export default function MedicalScribe() {
           </CardHeader>
 
           <CardContent>
+            <div className="mb-3 flex items-center justify-between">
+              <Badge variant="secondary">
+                Live English Translation
+              </Badge>
+
+              {patient && (
+                <div className="text-xs text-slate-500">
+                  Patient: {patient.fullName}
+                </div>
+              )}
+            </div>
             <Textarea
               className="h-[520px]"
               value={[finalTranscript, interimTranscript]

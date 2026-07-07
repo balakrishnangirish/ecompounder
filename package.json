@@ -27,6 +27,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev --webpack",
+    "live:server": "node server/transcribe-live-server.js",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
