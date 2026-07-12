@@ -79,6 +79,33 @@ const EMPTY_SOAP: SoapNote = {
 const LIVE_WS_URL =
   process.env.NEXT_PUBLIC_LIVE_WS_URL || "ws://localhost:3001";
 
+function getDiarizationApiUrl() {
+  if (process.env.NEXT_PUBLIC_DIARIZATION_API_URL) {
+    return process.env.NEXT_PUBLIC_DIARIZATION_API_URL;
+  }
+
+  try {
+    const url = new URL(LIVE_WS_URL);
+    const isLocal =
+      url.hostname === "localhost" || url.hostname === "127.0.0.1";
+
+    if (isLocal) return "/api/diarize-translation";
+
+    if (url.protocol === "wss:") url.protocol = "https:";
+    if (url.protocol === "ws:") url.protocol = "http:";
+
+    url.pathname = "/diarize-translation";
+    url.search = "";
+    url.hash = "";
+
+    return url.toString();
+  } catch {
+    return "/api/diarize-translation";
+  }
+}
+
+const DIARIZATION_API_URL = getDiarizationApiUrl();
+
 function mergeArrayBuffers(chunks: ArrayBuffer[]) {
   const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
   const merged = new Uint8Array(total);
@@ -440,14 +467,25 @@ export default function MedicalScribe() {
       formData.append("audio", audioBlob, "encounter.wav");
       formData.append("numSpeakers", "2");
 
-      const res = await fetch("/api/diarize-translation", {
+      const res = await fetch(DIARIZATION_API_URL, {
         method: "POST",
         body: formData,
       });
 
-      const data = await res.json();
+      const isJson = res.headers
+        .get("content-type")
+        ?.includes("application/json");
+      const data = isJson
+        ? await res.json()
+        : { error: await res.text() };
 
       if (!res.ok) {
+        if (res.status === 413) {
+          throw new Error(
+            "The recording is too large for the current diarization endpoint. Please use the Render diarization endpoint for longer recordings."
+          );
+        }
+
         throw new Error(data?.error || "Diarization failed");
       }
 
