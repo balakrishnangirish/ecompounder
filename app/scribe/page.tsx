@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ChangeEvent } from "react";
 import {
   Mic,
   Square,
   AlertCircle,
   UserPlus,
   User,
+  Upload,
 } from "lucide-react";
 
 import {
@@ -34,12 +35,31 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-type SoapNote = {
-  subjective: string;
-  objective: string;
-  assessment: string;
-  plan: string;
+import primaryCareSoapTemplate from "@/lib/soap/templates/primary-care-soap.v1.json";
+
+type SoapNote = Record<string, unknown>;
+type SoapFieldPath = string;
+type SoapArrayFieldPath = string;
+type SoapCheckboxFieldPath = string;
+type SoapTemplateField = {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "checkbox" | "group" | "array";
+  fields?: SoapTemplateField[];
+  item?: {
+    type: "text" | "textarea";
+    label: string;
+  };
+  minItems?: number;
+  maxItems?: number;
 };
+type SoapTemplateSection = {
+  key: string;
+  title: string;
+  fields: SoapTemplateField[];
+};
+
+type SoapEditablePath = SoapFieldPath | SoapArrayFieldPath | SoapCheckboxFieldPath;
 
 type SoapStatus = "empty" | "draft" | "final";
 type EditStatus = "clean" | "unsaved" | "saved";
@@ -69,12 +89,21 @@ type Encounter = {
   patientId: string;
 };
 
-const EMPTY_SOAP: SoapNote = {
-  subjective: "",
-  objective: "",
-  assessment: "",
-  plan: "",
+const SOAP_TEMPLATE = primaryCareSoapTemplate as {
+  outputShape: SoapNote;
+  sections: SoapTemplateSection[];
 };
+const EMPTY_SOAP: SoapNote = SOAP_TEMPLATE.outputShape;
+const SOAP_TEXT_FIELD_PATHS = getSoapTemplateFieldPaths(SOAP_TEMPLATE.sections, [
+  "text",
+  "textarea",
+]);
+const SOAP_ARRAY_FIELD_PATHS = getSoapTemplateFieldPaths(SOAP_TEMPLATE.sections, [
+  "array",
+]);
+const SOAP_CHECKBOX_PATHS = getSoapTemplateFieldPaths(SOAP_TEMPLATE.sections, [
+  "checkbox",
+]);
 
 const LIVE_WS_URL =
   process.env.NEXT_PUBLIC_LIVE_WS_URL || "ws://localhost:3001";
@@ -105,6 +134,14 @@ function getDiarizationApiUrl() {
 }
 
 const DIARIZATION_API_URL = getDiarizationApiUrl();
+const pageTitleClassName = "text-[22px] font-semibold leading-7 tracking-normal";
+const panelTitleClassName = "text-[17px] font-semibold leading-6 text-slate-900";
+const sectionTitleClassName = "text-[15px] font-semibold leading-5 text-slate-900";
+const groupTitleClassName = "text-[14px] font-semibold leading-5 text-slate-700";
+const fieldLabelClassName = "text-[13px] font-medium leading-5 text-slate-500";
+const helperTextClassName = "text-[13px] leading-5 text-slate-500";
+const editableBoxClassName =
+  "border-slate-300 bg-white shadow-[inset_0_1px_0_rgba(15,23,42,0.03)]";
 
 function mergeArrayBuffers(chunks: ArrayBuffer[]) {
   const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
@@ -189,6 +226,196 @@ function applySpeakerRoles(
     .join("\n");
 }
 
+function getSoapTemplateFieldPaths(
+  sections: SoapTemplateSection[],
+  fieldTypes: SoapTemplateField["type"][]
+) {
+  return sections.flatMap((section) =>
+    getSoapTemplateFieldPathsFromFields(section.fields, section.key, fieldTypes)
+  );
+}
+
+function getSoapTemplateFieldPathsFromFields(
+  fields: SoapTemplateField[],
+  prefix: string,
+  fieldTypes: SoapTemplateField["type"][]
+): string[] {
+  return fields.flatMap((field) => {
+    const path = `${prefix}.${field.key}`;
+
+    if (field.type === "group") {
+      return getSoapTemplateFieldPathsFromFields(
+        field.fields || [],
+        path,
+        fieldTypes
+      );
+    }
+
+    return fieldTypes.includes(field.type) ? [path] : [];
+  });
+}
+
+function cloneSoapNote(note: SoapNote) {
+  return JSON.parse(JSON.stringify(note)) as SoapNote;
+}
+
+function getSoapField(note: SoapNote, path: SoapFieldPath) {
+  const value = path
+    .split(".")
+    .reduce<unknown>((current, key) => {
+      if (!current || typeof current !== "object") return "";
+      return (current as Record<string, unknown>)[key];
+    }, note);
+
+  return typeof value === "string" ? value : "";
+}
+
+function getSoapArrayField(note: SoapNote, path: SoapFieldPath) {
+  const value = path
+    .split(".")
+    .reduce<unknown>((current, key) => {
+      if (!current || typeof current !== "object") return [];
+      return (current as Record<string, unknown>)[key];
+    }, note);
+
+  return Array.isArray(value)
+    ? value.map((item) => (typeof item === "string" ? item : ""))
+    : [];
+}
+
+function arrayToNumberedText(items: string[]) {
+  const visibleItems = items.length > 0 ? items : [""];
+  return visibleItems.map((item, index) => `${index + 1}. ${item}`).join("\n");
+}
+
+function numberedTextToArray(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.replace(/^\s*\d+[\).:-]?\s*/, ""));
+}
+
+function getSoapCheckboxField(note: SoapNote, path: SoapCheckboxFieldPath) {
+  const value = path
+    .split(".")
+    .reduce<unknown>((current, key) => {
+      if (!current || typeof current !== "object") return false;
+      return (current as Record<string, unknown>)[key];
+    }, note);
+
+  return value === true;
+}
+
+function setSoapField(
+  note: SoapNote,
+  path: SoapFieldPath,
+  value: string | string[]
+) {
+  const next = cloneSoapNote(note);
+  const keys = path.split(".");
+  let current: Record<string, unknown> = next as unknown as Record<
+    string,
+    unknown
+  >;
+
+  for (const key of keys.slice(0, -1)) {
+    current = current[key] as Record<string, unknown>;
+  }
+
+  current[keys[keys.length - 1]] = value;
+  return next;
+}
+
+function setSoapCheckboxField(
+  note: SoapNote,
+  path: SoapCheckboxFieldPath,
+  value: boolean
+) {
+  const next = cloneSoapNote(note);
+  const keys = path.split(".");
+  let current: Record<string, unknown> = next as unknown as Record<
+    string,
+    unknown
+  >;
+
+  for (const key of keys.slice(0, -1)) {
+    current = current[key] as Record<string, unknown>;
+  }
+
+  current[keys[keys.length - 1]] = value;
+  return next;
+}
+
+function normalizeSoapNote(data: Partial<SoapNote>) {
+  let next = cloneSoapNote(EMPTY_SOAP);
+
+  for (const path of SOAP_TEXT_FIELD_PATHS) {
+    const value = getSoapField(data as SoapNote, path);
+    if (typeof value === "string") {
+      next = setSoapField(next, path, value);
+    }
+  }
+
+  for (const path of SOAP_ARRAY_FIELD_PATHS) {
+    next = setSoapField(next, path, getSoapArrayField(data as SoapNote, path));
+  }
+
+  for (const path of SOAP_CHECKBOX_PATHS) {
+    const value = getSoapCheckboxField(data as SoapNote, path);
+    if (typeof value === "boolean") {
+      next = setSoapCheckboxField(next, path, value);
+    }
+  }
+
+  return next;
+}
+
+function mergeGeneratedSoapNote(
+  current: SoapNote,
+  generated: Partial<SoapNote>,
+  editedFields: SoapEditablePath[]
+) {
+  let next = normalizeSoapNote(generated);
+
+  for (const path of editedFields) {
+    if (isSoapCheckboxPath(path)) {
+      next = setSoapCheckboxField(
+        next,
+        path,
+        getSoapCheckboxField(current, path)
+      );
+    } else if (isSoapArrayPath(path)) {
+      next = setSoapField(next, path, getSoapArrayField(current, path));
+    } else {
+      next = setSoapField(next, path, getSoapField(current, path) || "");
+    }
+  }
+
+  return next;
+}
+
+function soapHasText(note: SoapNote) {
+  return (
+    SOAP_TEXT_FIELD_PATHS.some((path) => getSoapField(note, path).trim()) ||
+    SOAP_ARRAY_FIELD_PATHS.some((path) =>
+      getSoapArrayField(note, path).some((item) => item.trim())
+    ) ||
+    SOAP_CHECKBOX_PATHS.some((path) => getSoapCheckboxField(note, path))
+  );
+}
+
+function isSoapCheckboxPath(path: SoapEditablePath): path is SoapCheckboxFieldPath {
+  return SOAP_CHECKBOX_PATHS.includes(path as SoapCheckboxFieldPath);
+}
+
+function isSoapArrayPath(path: SoapEditablePath): path is SoapArrayFieldPath {
+  return SOAP_ARRAY_FIELD_PATHS.includes(path as SoapArrayFieldPath);
+}
+
+function isSupportedAudioFile(file: File) {
+  if (file.type.startsWith("audio/")) return true;
+  return /\.(aac|aiff|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name);
+}
+
 export default function MedicalScribe() {
   const [mounted, setMounted] = useState(false);
 
@@ -211,7 +438,7 @@ export default function MedicalScribe() {
   const [soapNote, setSoapNote] = useState<SoapNote>(EMPTY_SOAP);
   const [soapStatus, setSoapStatus] = useState<SoapStatus>("empty");
   const [editedSoapFields, setEditedSoapFields] = useState<
-    Array<keyof SoapNote>
+    SoapEditablePath[]
   >([]);
   const [editStatus, setEditStatus] = useState<EditStatus>("clean");
   const [loadingLLM, setLoadingLLM] = useState(false);
@@ -235,6 +462,7 @@ export default function MedicalScribe() {
   const pcmRecordingChunksRef = useRef<ArrayBuffer[]>([]);
   const transcriptRef = useRef("");
   const loadingLLMRef = useRef(false);
+  const audioUploadInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => setMounted(true), []);
 
@@ -298,11 +526,7 @@ export default function MedicalScribe() {
     setError(null);
   };
 
-  // =========================
-  // START RECORDING
-  // =========================
-  const startRecording = async () => {
-    setError(null);
+  const resetEncounterCapture = () => {
     setRecordingTime(0);
     setFinalTranscript("");
     setInterimTranscript("");
@@ -317,11 +541,20 @@ export default function MedicalScribe() {
     setSpeakerRoles({});
     setRoleStatus("idle");
     pcmRecordingChunksRef.current = [];
+  };
+
+  // =========================
+  // START RECORDING
+  // =========================
+  const startRecording = async () => {
+    setError(null);
 
     if (!patient || !encounter) {
       setError("Please add a patient before starting recording.");
       return;
     }
+
+    resetEncounterCapture();
 
     try {
       // ---------------- WS ----------------
@@ -456,15 +689,23 @@ export default function MedicalScribe() {
   // =========================
   // STOP
   // =========================
-  const processDiarizedTranscript = async (audioBlob: Blob) => {
+  const processDiarizedTranscript = async (
+    audioBlob: Blob,
+    fileName = "encounter.wav",
+    source: "recording" | "upload" = "recording"
+  ) => {
     if (audioBlob.size === 0) return;
 
     setDiarizationStatus("processing");
-    setDiarizationMessage("Finalizing speaker-separated transcript...");
+    setDiarizationMessage(
+      source === "upload"
+        ? "Uploading audio and finalizing speaker-separated transcript..."
+        : "Finalizing speaker-separated transcript..."
+    );
 
     try {
       const formData = new FormData();
-      formData.append("audio", audioBlob, "encounter.wav");
+      formData.append("audio", audioBlob, fileName || "encounter.wav");
       formData.append("numSpeakers", "2");
 
       const res = await fetch(DIARIZATION_API_URL, {
@@ -527,6 +768,34 @@ export default function MedicalScribe() {
         err?.message || "Could not finalize speaker-separated transcript."
       );
     }
+  };
+
+  const handleAudioFileSelected = (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!patient || !encounter) {
+      setError("Please add a patient before uploading audio.");
+      return;
+    }
+
+    if (isRecording) {
+      setError("Stop the current recording before uploading audio.");
+      return;
+    }
+
+    if (!isSupportedAudioFile(file)) {
+      setError("Please upload a supported audio file.");
+      return;
+    }
+
+    setError(null);
+    resetEncounterCapture();
+    void processDiarizedTranscript(file, file.name || "uploaded-audio", "upload");
   };
 
   const inferSpeakerRoles = async (
@@ -655,20 +924,9 @@ export default function MedicalScribe() {
         throw new Error(data?.error || "Failed to generate SOAP note");
       }
 
-      setSoapNote((prev) => ({
-        subjective: editedSoapFields.includes("subjective")
-          ? prev.subjective
-          : data.subjective || "",
-        objective: editedSoapFields.includes("objective")
-          ? prev.objective
-          : data.objective || "",
-        assessment: editedSoapFields.includes("assessment")
-          ? prev.assessment
-          : data.assessment || "",
-        plan: editedSoapFields.includes("plan")
-          ? prev.plan
-          : data.plan || "",
-      }));
+      setSoapNote((prev) =>
+        mergeGeneratedSoapNote(prev, data, editedSoapFields)
+      );
       setSoapStatus("draft");
       setEditStatus("clean");
       return true;
@@ -682,15 +940,26 @@ export default function MedicalScribe() {
   };
 
   const handleSOAPFieldChange = (
-    field: keyof SoapNote,
-    value: string
+    field: SoapFieldPath,
+    value: string | string[]
   ) => {
     if (soapStatus === "final") return;
 
-    setSoapNote((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setSoapNote((prev) => setSoapField(prev, field, value));
+    setSoapStatus("draft");
+    setEditStatus("unsaved");
+    setEditedSoapFields((prev) =>
+      prev.includes(field) ? prev : [...prev, field]
+    );
+  };
+
+  const handleSOAPCheckboxChange = (
+    field: SoapCheckboxFieldPath,
+    value: boolean
+  ) => {
+    if (soapStatus === "final") return;
+
+    setSoapNote((prev) => setSoapCheckboxField(prev, field, value));
     setSoapStatus("draft");
     setEditStatus("unsaved");
     setEditedSoapFields((prev) =>
@@ -699,9 +968,7 @@ export default function MedicalScribe() {
   };
 
   const handleSaveEdits = () => {
-    const hasSoapText = Object.values(soapNote).some((value) =>
-      value.trim()
-    );
+    const hasSoapText = soapHasText(soapNote);
 
     if (!hasSoapText || soapStatus === "final") return;
 
@@ -710,9 +977,7 @@ export default function MedicalScribe() {
   };
 
   const handleFinalizeSOAP = () => {
-    const hasSoapText = Object.values(soapNote).some((value) =>
-      value.trim()
-    );
+    const hasSoapText = soapHasText(soapNote);
 
     if (!hasSoapText) {
       setError("Generate or enter a SOAP note before finalizing.");
@@ -745,12 +1010,130 @@ export default function MedicalScribe() {
         ? "Edits saved"
         : "Draft"
       : "Not started";
-  const hasSoapText = Object.values(soapNote).some((value) =>
-    value.trim()
+  const hasSoapText = soapHasText(soapNote);
+  const renderSoapInput = (
+    label: string,
+    path: SoapFieldPath,
+    placeholder = ""
+  ) => (
+    <div className="space-y-1">
+      <Label className={fieldLabelClassName}>
+        {label}
+      </Label>
+      <Textarea
+        className={`min-h-12 resize-y ${editableBoxClassName}`}
+        value={getSoapField(soapNote, path)}
+        onChange={(e) => handleSOAPFieldChange(path, e.target.value)}
+        readOnly={soapStatus === "final"}
+        placeholder={placeholder}
+      />
+    </div>
   );
+  const renderSoapTextarea = (
+    label: string,
+    path: SoapFieldPath,
+    placeholder = ""
+  ) => (
+    <div className="space-y-1">
+      <Label className={fieldLabelClassName}>
+        {label}
+      </Label>
+      <Textarea
+        className={`min-h-24 resize-y ${editableBoxClassName}`}
+        value={getSoapField(soapNote, path)}
+        onChange={(e) => handleSOAPFieldChange(path, e.target.value)}
+        readOnly={soapStatus === "final"}
+        placeholder={placeholder}
+      />
+    </div>
+  );
+  const renderSoapCheckbox = (
+    label: string,
+    path: SoapCheckboxFieldPath
+  ) => (
+    <label className="flex min-h-10 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm leading-5 text-slate-800">
+      <input
+        type="checkbox"
+        checked={getSoapCheckboxField(soapNote, path)}
+        onChange={(e) => handleSOAPCheckboxChange(path, e.target.checked)}
+        disabled={soapStatus === "final"}
+        className="h-4 w-4 accent-teal-700"
+      />
+      <span>{label}</span>
+    </label>
+  );
+  const renderSoapTemplateField = (
+    field: SoapTemplateField,
+    pathPrefix: string
+  ) => {
+    const path = `${pathPrefix}.${field.key}`;
+
+    if (field.type === "group") {
+      const hasCheckboxes = field.fields?.some((item) => item.type === "checkbox");
+
+      return (
+        <div key={path} className="space-y-3">
+          <div className={groupTitleClassName}>
+            {field.label}
+          </div>
+          <div
+            className={
+              hasCheckboxes
+                ? "grid gap-3 lg:grid-cols-2"
+                : "grid gap-3"
+            }
+          >
+            {(field.fields || []).map((child) => {
+              const shouldSpanFullRow = hasCheckboxes && child.type !== "checkbox";
+
+              return (
+                <div
+                  key={`${path}.${child.key}`}
+                  className={shouldSpanFullRow ? "lg:col-span-2" : ""}
+                >
+                  {renderSoapTemplateField(child, path)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    if (field.type === "checkbox") {
+      return renderSoapCheckbox(field.label, path);
+    }
+
+    if (field.type === "text") {
+      return renderSoapInput(field.label, path);
+    }
+
+    if (field.type === "array") {
+      const values = getSoapArrayField(soapNote, path);
+
+      return (
+        <div className="space-y-2">
+          <Label className={fieldLabelClassName}>
+            {field.label}
+          </Label>
+          <Textarea
+            className={`min-h-24 resize-y ${editableBoxClassName}`}
+            value={arrayToNumberedText(values)}
+            onChange={(event) =>
+              handleSOAPFieldChange(path, numberedTextToArray(event.target.value))
+            }
+            readOnly={soapStatus === "final"}
+            placeholder={`1. ${field.item?.label || field.label}`}
+          />
+        </div>
+      );
+    }
+
+    return renderSoapTextarea(field.label, path);
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
+    <div className="min-h-screen bg-slate-100 p-4 text-slate-950 md:p-6">
       <Dialog
         open={patientDialogOpen}
         onOpenChange={setPatientDialogOpen}
@@ -809,30 +1192,34 @@ export default function MedicalScribe() {
         </DialogContent>
       </Dialog>
 
-      <header className="flex flex-col gap-4 mb-6 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-blue-600">
-            E-Compounder AI Scribe
-          </h1>
+      <header className="mb-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className={fieldLabelClassName}>
+              E-Compounder
+            </p>
+            <h1 className={pageTitleClassName}>
+              AI Scribe
+            </h1>
+            <p className={helperTextClassName}>
+              Ambient clinical documentation workspace
+            </p>
+          </div>
 
-          <p className="text-sm text-slate-500 mt-1">
-            Ambient clinical documentation workspace
-          </p>
-        </div>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setPatientDialogOpen(true)}
+              className="gap-2 rounded-md"
+            >
+              <UserPlus className="h-4 w-4" />
+              {patient ? "Switch Patient" : "Add Patient"}
+            </Button>
 
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            onClick={() => setPatientDialogOpen(true)}
-            className="gap-2"
-          >
-            <UserPlus className="h-4 w-4" />
-            {patient ? "Switch Patient" : "Add Patient"}
-          </Button>
-
-          <Badge variant={socketConnected ? "default" : "secondary"}>
-            {socketConnected ? "Live" : "Offline"}
-          </Badge>
+            <Badge variant={socketConnected ? "default" : "secondary"}>
+              {socketConnected ? "Live" : "Offline"}
+            </Badge>
+          </div>
         </div>
       </header>
 
@@ -844,11 +1231,11 @@ export default function MedicalScribe() {
       )}
 
       {patient && encounter && (
-        <Card className="mb-6 border-blue-100 bg-blue-50/40">
+        <Card className="mb-4 rounded-md border-slate-200 bg-white shadow-sm">
           <CardContent className="flex flex-col gap-4 py-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-start gap-3">
-              <div className="rounded-full bg-blue-100 p-2">
-                <User className="h-5 w-5 text-blue-600" />
+              <div className="rounded-md bg-slate-100 p-2">
+                <User className="h-5 w-5 text-slate-600" />
               </div>
 
               <div>
@@ -877,50 +1264,119 @@ export default function MedicalScribe() {
         </Card>
       )}
 
-      {/* ================= RECORDER ================= */}
-      <Card className="mb-6">
-        <CardHeader className="py-2">
-          <CardTitle>Recorder</CardTitle>
-          <CardDescription>
-            Live patient consultation capture
-          </CardDescription>
+      <input
+        ref={audioUploadInputRef}
+        type="file"
+        accept="audio/*,.aac,.aiff,.flac,.m4a,.mp3,.mp4,.ogg,.wav,.webm"
+        className="hidden"
+        onChange={handleAudioFileSelected}
+      />
+
+      {/* ================= CAPTURE OPTIONS ================= */}
+      <Card className="mb-4 overflow-hidden rounded-md border-slate-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className={panelTitleClassName}>
+              Create a Compliant Note Automatically
+            </CardTitle>
+            <CardDescription className={helperTextClassName}>
+              Choose how to capture the consultation
+            </CardDescription>
+          </div>
+
+          <Badge
+            variant={
+              isRecording || diarizationStatus === "processing"
+                ? "default"
+                : "secondary"
+            }
+            className="w-fit"
+          >
+            {diarizationStatus === "processing"
+              ? "Processing audio"
+              : isRecording
+              ? `Live • ${formatTime(recordingTime)}`
+              : "Ready"}
+          </Badge>
         </CardHeader>
 
-        <CardContent className="flex justify-between items-center">
-          <div className="flex items-center gap-4">
-            <Button
+        <CardContent className="bg-sky-50/80 p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
               onClick={
                 isRecording ? stopRecording : startRecording
               }
-              variant={isRecording ? "destructive" : "default"}
-              size="lg"
-              className="h-14 w-14 rounded-full"
+              disabled={
+                !isRecording &&
+                (diarizationStatus === "processing" || loadingLLM)
+              }
+              className={`flex items-center rounded-md border bg-white p-4 text-left shadow-sm transition ${
+                isRecording
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-slate-200 text-slate-900 hover:border-sky-200 hover:bg-sky-50"
+              } disabled:cursor-not-allowed disabled:opacity-60`}
             >
-              {isRecording ? <Square /> : <Mic />}
-            </Button>
+              <div
+                className={`mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${
+                  isRecording
+                    ? "bg-red-100"
+                    : "bg-sky-100 text-sky-700"
+                }`}
+              >
+                {isRecording ? (
+                  <Square className="h-5 w-5" />
+                ) : (
+                  <Mic className="h-5 w-5" />
+                )}
+              </div>
+              <div>
+                <div className={sectionTitleClassName}>
+                  {isRecording ? "Stop recording" : "Record session"}
+                </div>
+                <div className={helperTextClassName}>
+                  Live in-person capture
+                </div>
+              </div>
+            </button>
 
-            <div className="text-sm text-slate-600">
-              {isRecording
-                ? `Live • ${formatTime(recordingTime)}`
-                : "Ready"}
-            </div>
+            <button
+              type="button"
+              disabled={
+                isRecording ||
+                diarizationStatus === "processing" ||
+                loadingLLM
+              }
+              onClick={() => audioUploadInputRef.current?.click()}
+              className="flex items-center rounded-md border border-slate-200 bg-white p-4 text-left text-slate-900 shadow-sm transition hover:border-sky-200 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <div className="mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-sky-100 text-sky-700">
+                <Upload className="h-5 w-5" />
+              </div>
+              <div>
+                <div className={sectionTitleClassName}>Upload audio</div>
+                <div className={helperTextClassName}>
+                  Process a recorded file
+                </div>
+              </div>
+            </button>
           </div>
         </CardContent>
       </Card>
 
       {/* ================= 2 COLUMN UI (RESTORED) ================= */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
 
         {/* LEFT: TRANSCRIPT */}
-        <Card>
-          <CardHeader>
-            <CardTitle>English Translation</CardTitle>
-            <CardDescription>
+        <Card className="overflow-hidden rounded-md border-slate-200 bg-white shadow-sm">
+          <CardHeader className="border-b border-slate-200 p-4">
+            <CardTitle className={panelTitleClassName}>English Translation</CardTitle>
+            <CardDescription className={helperTextClassName}>
               Live speech translated to English
             </CardDescription>
           </CardHeader>
 
-          <CardContent>
+          <CardContent className="bg-sky-50/80 p-3">
             <div className="mb-3 flex items-center justify-between">
               <Badge
                 variant={
@@ -935,26 +1391,26 @@ export default function MedicalScribe() {
               </Badge>
 
               {patient && (
-                <div className="text-xs text-slate-500">
+                <div className={helperTextClassName}>
                   Patient: {patient.fullName}
                 </div>
               )}
             </div>
             {diarizationMessage && (
-              <div className="mb-3 text-xs text-slate-500">
+              <div className={`mb-3 ${helperTextClassName}`}>
                 {diarizationMessage}
               </div>
             )}
             {speakerIds.length > 0 &&
               roleStatus !== "idle" &&
               roleStatus !== "confirmed" && (
-                <div className="mb-3 rounded-md border bg-slate-50 p-3">
+                <div className="mb-3 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
                   <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="text-sm font-semibold text-slate-900">
+                      <div className={sectionTitleClassName}>
                         Confirm Speaker Roles
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div className={helperTextClassName}>
                         Suggested from the diarized transcript.
                       </div>
                     </div>
@@ -983,7 +1439,7 @@ export default function MedicalScribe() {
                     {speakerIds.map((speaker) => (
                       <div
                         key={speaker}
-                        className="flex items-center justify-between rounded border bg-white px-3 py-2"
+                        className="flex items-center justify-between rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2"
                       >
                         <span className="font-mono text-xs text-slate-500">
                           {speaker}
@@ -997,13 +1453,13 @@ export default function MedicalScribe() {
                 </div>
               )}
             {roleStatus === "confirmed" && speakerIds.length > 0 && (
-              <div className="mb-3 flex items-center justify-between rounded-md border bg-green-50 px-3 py-2 text-xs text-green-700">
+              <div className="mb-3 flex items-center justify-between rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-xs text-teal-700">
                 <span>Speaker roles confirmed</span>
                 <Badge variant="secondary">Doctor / Patient</Badge>
               </div>
             )}
             <Textarea
-              className="h-[520px]"
+              className="h-[520px] resize-y border-slate-200 bg-white shadow-sm"
               value={[finalTranscript, interimTranscript]
                 .filter(Boolean)
                 .join("\n")
@@ -1015,11 +1471,11 @@ export default function MedicalScribe() {
         </Card>
 
         {/* RIGHT: SOAP */}
-        <Card>
-          <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <Card className="overflow-hidden rounded-md border-slate-200 bg-white shadow-sm">
+          <CardHeader className="flex flex-col gap-4 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <CardTitle>SOAP Note</CardTitle>
-              <CardDescription>
+              <CardTitle className={panelTitleClassName}>SOAP Note</CardTitle>
+              <CardDescription className={helperTextClassName}>
                 Structured clinical documentation
               </CardDescription>
             </div>
@@ -1078,69 +1534,33 @@ export default function MedicalScribe() {
             </div>
           </CardHeader>
 
-          <CardContent>
-            <div className="h-[520px] overflow-y-auto border rounded-md p-4 text-sm space-y-4 bg-white">
-
-              <div>
-                <div className="font-bold text-blue-600">
-                  Subjective
-                </div>
-                <Textarea
-                  className="mt-2 min-h-24 resize-y"
-                  value={soapNote.subjective}
-                  onChange={(e) =>
-                    handleSOAPFieldChange("subjective", e.target.value)
-                  }
-                  readOnly={soapStatus === "final"}
-                  placeholder="Subjective notes..."
-                />
+          <CardContent className="bg-sky-50/80 p-3">
+            <div className="h-[520px] overflow-y-auto rounded-md border border-slate-200 bg-white p-4 text-sm shadow-sm">
+              <div className="space-y-4">
+                {SOAP_TEMPLATE.sections.map((section) => (
+                  <section
+                    key={section.key}
+                    className="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className={sectionTitleClassName}>
+                      {section.title}
+                    </div>
+                    <div
+                      className={
+                        section.fields.every((field) => field.type === "text")
+                          ? "grid gap-3 md:grid-cols-3"
+                          : "space-y-4"
+                      }
+                    >
+                      {section.fields.map((field) => (
+                        <div key={`${section.key}.${field.key}`}>
+                          {renderSoapTemplateField(field, section.key)}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
               </div>
-
-              <div>
-                <div className="font-bold text-blue-600">
-                  Objective
-                </div>
-                <Textarea
-                  className="mt-2 min-h-24 resize-y"
-                  value={soapNote.objective}
-                  onChange={(e) =>
-                    handleSOAPFieldChange("objective", e.target.value)
-                  }
-                  readOnly={soapStatus === "final"}
-                  placeholder="Objective findings..."
-                />
-              </div>
-
-              <div>
-                <div className="font-bold text-blue-600">
-                  Assessment
-                </div>
-                <Textarea
-                  className="mt-2 min-h-24 resize-y"
-                  value={soapNote.assessment}
-                  onChange={(e) =>
-                    handleSOAPFieldChange("assessment", e.target.value)
-                  }
-                  readOnly={soapStatus === "final"}
-                  placeholder="Assessment..."
-                />
-              </div>
-
-              <div>
-                <div className="font-bold text-blue-600">
-                  Plan
-                </div>
-                <Textarea
-                  className="mt-2 min-h-24 resize-y"
-                  value={soapNote.plan}
-                  onChange={(e) =>
-                    handleSOAPFieldChange("plan", e.target.value)
-                  }
-                  readOnly={soapStatus === "final"}
-                  placeholder="Plan..."
-                />
-              </div>
-
             </div>
           </CardContent>
         </Card>
