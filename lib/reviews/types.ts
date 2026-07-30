@@ -77,7 +77,6 @@ export type SoapSectionReview = {
 export type ReviewCaseSummary = {
   id: string;
   status: ReviewStatus;
-  assignedReviewer?: string;
   model: string;
   audioUrl?: string;
   audioFileName: string;
