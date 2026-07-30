@@ -80,6 +80,19 @@ export const audioFixtures: AudioReviewFixture[] = [
   },
 ];
 
+const audioFilePathById: Record<string, string> = {
+  "rev-mp3-001": path.join(process.cwd(), "Hindi.mp3"),
+  "rev-mp3-002": path.join(
+    process.cwd(),
+    "e98b161f1ed510f74b0effeee351c915.mp3"
+  ),
+  "rev-mp3-003": path.join(process.cwd(), "Hindi_Marathi.mp3"),
+  "rev-mp3-004": path.join(
+    process.cwd(),
+    "97a6b8d6fa46d2e85a7c6b666aa19d77.mp3"
+  ),
+};
+
 export const reviewCases: ReviewCase[] = audioFixtures.map((fixture, index) =>
   buildUnprocessedReviewCase(fixture, index)
 );
@@ -93,8 +106,7 @@ export function getAudioFileName(id: string) {
 }
 
 export function getAudioFilePath(id: string) {
-  const fileName = getAudioFileName(id);
-  return fileName ? path.join(process.cwd(), fileName) : null;
+  return audioFilePathById[id] ?? null;
 }
 
 export function getReviewCaseSummaries(): ReviewCaseSummary[] {
