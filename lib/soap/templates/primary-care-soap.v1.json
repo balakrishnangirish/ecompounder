@@ -1,0 +1,411 @@
+{
+  "templateKey": "primary-care-soap",
+  "version": "v1",
+  "name": "Primary Care SOAP",
+  "description": "Primary-care SOAP documentation template for clinician review.",
+  "sections": [
+    {
+      "key": "subjective",
+      "title": "Subjective",
+      "fields": [
+        {
+          "key": "chiefComplaints",
+          "label": "Chief complaints",
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 6,
+          "item": {
+            "type": "textarea",
+            "label": "Complaint"
+          }
+        },
+        {
+          "key": "historyOfPresentingIllness",
+          "label": "History of presenting illness (HOPI)",
+          "type": "textarea"
+        },
+        {
+          "key": "pastMedicalHistory",
+          "label": "Past medical history",
+          "type": "group",
+          "fields": [
+            {
+              "key": "hypertension",
+              "label": "Hypertension",
+              "type": "checkbox"
+            },
+            {
+              "key": "diabetes",
+              "label": "Diabetes",
+              "type": "checkbox"
+            },
+            {
+              "key": "tb",
+              "label": "TB",
+              "type": "checkbox"
+            },
+            {
+              "key": "asthmaCopd",
+              "label": "Asthma/COPD",
+              "type": "checkbox"
+            },
+            {
+              "key": "ihd",
+              "label": "IHD",
+              "type": "checkbox"
+            },
+            {
+              "key": "stroke",
+              "label": "Stroke",
+              "type": "checkbox"
+            },
+            {
+              "key": "ckd",
+              "label": "CKD",
+              "type": "checkbox"
+            },
+            {
+              "key": "cld",
+              "label": "CLD",
+              "type": "checkbox"
+            },
+            {
+              "key": "thyroid",
+              "label": "Thyroid",
+              "type": "checkbox"
+            },
+            {
+              "key": "mentalIllness",
+              "label": "Mental illness",
+              "type": "checkbox"
+            },
+            {
+              "key": "other",
+              "label": "Other",
+              "type": "textarea"
+            }
+          ]
+        },
+        {
+          "key": "pastSurgicalHistory",
+          "label": "Past surgical history",
+          "type": "textarea"
+        },
+        {
+          "key": "familyHistory",
+          "label": "Family history",
+          "type": "textarea"
+        },
+        {
+          "key": "personalAndDietaryHistory",
+          "label": "Personal & dietary history",
+          "type": "textarea"
+        }
+      ]
+    },
+    {
+      "key": "objective",
+      "title": "Objective",
+      "fields": [
+        {
+          "key": "generalExamination",
+          "label": "General examination",
+          "type": "group",
+          "fields": [
+            {
+              "key": "generalAppearance",
+              "label": "General appearance",
+              "type": "textarea"
+            },
+            {
+              "key": "pulse",
+              "label": "Pulse",
+              "type": "text"
+            },
+            {
+              "key": "bloodPressure",
+              "label": "Blood pressure",
+              "type": "text"
+            },
+            {
+              "key": "respiratoryRate",
+              "label": "Respiratory rate",
+              "type": "text"
+            },
+            {
+              "key": "temperature",
+              "label": "Temperature",
+              "type": "text"
+            },
+            {
+              "key": "spo2",
+              "label": "SpO₂",
+              "type": "text"
+            },
+            {
+              "key": "height",
+              "label": "Height",
+              "type": "text"
+            },
+            {
+              "key": "weight",
+              "label": "Weight",
+              "type": "text"
+            },
+            {
+              "key": "bmi",
+              "label": "BMI",
+              "type": "text"
+            },
+            {
+              "key": "pallor",
+              "label": "Pallor",
+              "type": "checkbox"
+            },
+            {
+              "key": "icterus",
+              "label": "Icterus",
+              "type": "checkbox"
+            },
+            {
+              "key": "cyanosis",
+              "label": "Cyanosis",
+              "type": "checkbox"
+            },
+            {
+              "key": "clubbing",
+              "label": "Clubbing",
+              "type": "checkbox"
+            },
+            {
+              "key": "lymphadenopathy",
+              "label": "Lymphadenopathy",
+              "type": "checkbox"
+            },
+            {
+              "key": "pedalEdema",
+              "label": "Pedal edema",
+              "type": "checkbox"
+            },
+            {
+              "key": "notes",
+              "label": "Notes",
+              "type": "textarea"
+            }
+          ]
+        },
+        {
+          "key": "systemicExamination",
+          "label": "Systemic examination",
+          "type": "group",
+          "fields": [
+            {
+              "key": "respiratory",
+              "label": "Respiratory",
+              "type": "textarea"
+            },
+            {
+              "key": "cvs",
+              "label": "CVS",
+              "type": "textarea"
+            },
+            {
+              "key": "git",
+              "label": "GIT",
+              "type": "textarea"
+            },
+            {
+              "key": "cns",
+              "label": "CNS",
+              "type": "textarea"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "assessment",
+      "title": "Assessment",
+      "fields": [
+        {
+          "key": "differentialDiagnosis",
+          "label": "Differential diagnosis",
+          "type": "group",
+          "fields": [
+            {
+              "key": "diagnosis1",
+              "label": "Differential diagnosis 1",
+              "type": "textarea"
+            },
+            {
+              "key": "diagnosis2",
+              "label": "Differential diagnosis 2",
+              "type": "textarea"
+            },
+            {
+              "key": "diagnosis3",
+              "label": "Differential diagnosis 3",
+              "type": "textarea"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "plan",
+      "title": "Plan",
+      "fields": [
+        {
+          "key": "investigationsAndTreatment",
+          "label": "Investigations & treatment",
+          "type": "group",
+          "fields": [
+            {
+              "key": "cbc",
+              "label": "CBC",
+              "type": "checkbox"
+            },
+            {
+              "key": "esrCrp",
+              "label": "ESR/CRP",
+              "type": "checkbox"
+            },
+            {
+              "key": "rft",
+              "label": "RFT",
+              "type": "checkbox"
+            },
+            {
+              "key": "lft",
+              "label": "LFT",
+              "type": "checkbox"
+            },
+            {
+              "key": "electrolytes",
+              "label": "Electrolytes",
+              "type": "checkbox"
+            },
+            {
+              "key": "urine",
+              "label": "Urine",
+              "type": "checkbox"
+            },
+            {
+              "key": "ecg",
+              "label": "ECG",
+              "type": "checkbox"
+            },
+            {
+              "key": "chestXray",
+              "label": "Chest X-ray",
+              "type": "checkbox"
+            },
+            {
+              "key": "echo",
+              "label": "Echo",
+              "type": "checkbox"
+            },
+            {
+              "key": "usg",
+              "label": "USG",
+              "type": "checkbox"
+            },
+            {
+              "key": "ct",
+              "label": "CT",
+              "type": "checkbox"
+            },
+            {
+              "key": "mri",
+              "label": "MRI",
+              "type": "checkbox"
+            },
+            {
+              "key": "abg",
+              "label": "ABG",
+              "type": "checkbox"
+            },
+            {
+              "key": "results",
+              "label": "Results",
+              "type": "textarea"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "outputShape": {
+    "subjective": {
+      "chiefComplaints": [],
+      "historyOfPresentingIllness": "",
+      "pastMedicalHistory": {
+        "hypertension": false,
+        "diabetes": false,
+        "tb": false,
+        "asthmaCopd": false,
+        "ihd": false,
+        "stroke": false,
+        "ckd": false,
+        "cld": false,
+        "thyroid": false,
+        "mentalIllness": false,
+        "other": ""
+      },
+      "pastSurgicalHistory": "",
+      "familyHistory": "",
+      "personalAndDietaryHistory": ""
+    },
+    "objective": {
+      "generalExamination": {
+        "generalAppearance": "",
+        "pulse": "",
+        "bloodPressure": "",
+        "respiratoryRate": "",
+        "temperature": "",
+        "spo2": "",
+        "height": "",
+        "weight": "",
+        "bmi": "",
+        "pallor": false,
+        "icterus": false,
+        "cyanosis": false,
+        "clubbing": false,
+        "lymphadenopathy": false,
+        "pedalEdema": false,
+        "notes": ""
+      },
+      "systemicExamination": {
+        "respiratory": "",
+        "cvs": "",
+        "git": "",
+        "cns": ""
+      }
+    },
+    "assessment": {
+      "differentialDiagnosis": {
+        "diagnosis1": "",
+        "diagnosis2": "",
+        "diagnosis3": ""
+      }
+    },
+    "plan": {
+      "investigationsAndTreatment": {
+        "cbc": false,
+        "esrCrp": false,
+        "rft": false,
+        "lft": false,
+        "electrolytes": false,
+        "urine": false,
+        "ecg": false,
+        "chestXray": false,
+        "echo": false,
+        "usg": false,
+        "ct": false,
+        "mri": false,
+        "abg": false,
+        "results": ""
+      }
+    }
+  }
+}
