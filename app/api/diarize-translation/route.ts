@@ -62,6 +62,11 @@ function formatDiarizedTranscript(entries: DiarizedEntry[]) {
   return lines.join("\n");
 }
 
+function sanitizeFileName(value: string) {
+  const fileName = path.basename(value || "encounter.wav");
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "encounter.wav";
+}
+
 export async function POST(req: Request) {
   const apiKey = process.env.API_KEY || process.env.SARVAM_API_KEY;
 
@@ -92,9 +97,10 @@ export async function POST(req: Request) {
 
     await mkdir(workDir, { recursive: true });
 
-    const inputFileName = "encounter.wav";
+    const inputFileName = sanitizeFileName(audio.name);
     const inputPath = path.join(workDir, inputFileName);
     const audioBuffer = Buffer.from(await audio.arrayBuffer());
+    const contentType = audio.type || "application/octet-stream";
 
     await writeFile(inputPath, audioBuffer);
 
@@ -125,7 +131,7 @@ export async function POST(req: Request) {
       method: "PUT",
       body: audioBuffer,
       headers: {
-        "Content-Type": "audio/wav",
+        "Content-Type": contentType,
         "x-ms-blob-type": "BlockBlob",
       },
     });

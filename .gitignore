@@ -24,3 +24,7 @@ node_modules
 .next
 
 /generated/prisma
+
+# audio files
+*.mp3
+*.wav

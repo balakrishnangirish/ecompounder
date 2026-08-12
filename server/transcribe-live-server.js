@@ -87,6 +87,11 @@ function formatDiarizedTranscript(entries) {
   return lines.join("\n");
 }
 
+function sanitizeFileName(value) {
+  const fileName = path.basename(value || "encounter.wav");
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "encounter.wav";
+}
+
 function requestToFormData(req) {
   const headers = new Headers();
 
@@ -125,9 +130,10 @@ async function handleDiarizeTranslation(req, res) {
 
     await mkdir(workDir, { recursive: true });
 
-    const inputFileName = "encounter.wav";
+    const inputFileName = sanitizeFileName(audio.name);
     const inputPath = path.join(workDir, inputFileName);
     const audioBuffer = Buffer.from(await audio.arrayBuffer());
+    const contentType = audio.type || "application/octet-stream";
 
     await writeFile(inputPath, audioBuffer);
 
@@ -158,7 +164,7 @@ async function handleDiarizeTranslation(req, res) {
       method: "PUT",
       body: audioBuffer,
       headers: {
-        "Content-Type": "audio/wav",
+        "Content-Type": contentType,
         "x-ms-blob-type": "BlockBlob",
       },
     });

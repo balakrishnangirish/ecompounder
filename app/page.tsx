@@ -3,9 +3,11 @@ import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
+  ClipboardList,
   FileText,
   Languages,
   Mic,
+  BarChart3,
   ShieldCheck,
   Stethoscope,
 } from "lucide-react";
@@ -33,9 +35,9 @@ const workflow = [
 
 const checks = [
   "Live translation bridge",
+  "Shared patient intake",
   "Doctor and patient role confirmation",
   "Editable SOAP draft workflow",
-  "Medication safety workspace",
 ];
 
 export default function Home() {
@@ -101,8 +103,33 @@ export default function Home() {
                   variant="secondary"
                   className="h-11"
                 >
-                  <Link href="/scribe">Review Workspace</Link>
+                  <Link href="/intake">
+                    <ClipboardList className="h-4 w-4" />
+                    Intake
+                  </Link>
                 </Button>
+
+                <Button
+                  asChild
+                  size="lg"
+                  variant="secondary"
+                  className="h-11"
+                >
+                  <Link href="/reviews">Review Queue</Link>
+                </Button>
+
+                <Button
+                  asChild
+                  size="lg"
+                  variant="secondary"
+                  className="h-11"
+                >
+                  <Link href="/quality">
+                    <BarChart3 className="h-4 w-4" />
+                    Quality
+                  </Link>
+                </Button>
+
               </div>
             </div>
           </div>
