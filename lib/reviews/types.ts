@@ -16,8 +16,10 @@ export type SpeakerRole =
 export type ErrorSeverity = "none" | "low" | "medium" | "high" | "critical";
 
 export type ReviewTargetType =
+  | "source_transcription"
   | "translation"
   | "speaker_role"
+  | "model_preference"
   | `soap_${string}`;
 
 export type SoapSectionKey = string;
@@ -37,6 +39,8 @@ export type ReviewErrorTag =
   | "missing_safety_netting";
 
 export type ReviewModelMetadata = {
+  processingProvider?: "sarvam" | "aws_transcribe_medical" | "unknown";
+  transcriptionModel?: string;
   translationModel: string;
   diarizationModel: string;
   roleModel: string;
@@ -44,6 +48,15 @@ export type ReviewModelMetadata = {
   templateName: string;
   templateVersion: string;
   promptVersion: string;
+};
+
+export type TranscriptModelOutput = {
+  modelKey: string;
+  label: string;
+  text: string;
+  predictedRole?: SpeakerRole;
+  errorTags?: ReviewErrorTag[];
+  severity?: ErrorSeverity;
 };
 
 export type TranscriptTurnReview = {
@@ -55,11 +68,40 @@ export type TranscriptTurnReview = {
   predictedRole: SpeakerRole;
   reviewedRole: SpeakerRole;
   sourceText?: string;
+  sourceTextNeedsCorrection?: boolean;
+  correctedSourceText?: string | null;
   translatedText: string;
   correctedTranslation?: string | null;
+  modelOutputs?: TranscriptModelOutput[];
+  preferredModelOutput?: string | null;
   errorTags: ReviewErrorTag[];
   severity: ErrorSeverity;
+  verifiedPerfect?: boolean;
+  reviewMetrics?: ReviewTurnMetrics;
   comment?: string;
+};
+
+export type ReviewTurnMetrics = {
+  visibleDurationMs: number;
+  activeDurationMs: number;
+  firstSeenAt?: string;
+  firstInteractionAt?: string;
+  lastInteractionAt?: string;
+  correctionEditCount: number;
+  roleChangeCount: number;
+  severityChangeCount: number;
+  tagToggleCount: number;
+  commentEditCount: number;
+  audioReplayCount: number;
+};
+
+export type TranscriptReviewMetrics = {
+  startedAt: string;
+  completedAt?: string;
+  durationMs: number;
+  turnCount: number;
+  verifiedPerfectTurnCount: number;
+  editedTurnCount: number;
 };
 
 export type SoapSectionReview = {
@@ -83,6 +125,7 @@ export type ReviewCaseSummary = {
   createdAt: string;
   sourceLanguage?: string;
   targetLanguage: string;
+  translationLanguage?: string;
   criticalFlagCount: number;
   turnCount: number;
   transcriptReviewStatus: ReviewStatus;
@@ -92,8 +135,8 @@ export type ReviewCaseSummary = {
 export type ReviewCase = ReviewCaseSummary & {
   modelMetadata: ReviewModelMetadata;
   transcript: TranscriptTurnReview[];
+  transcriptReviewMetrics?: TranscriptReviewMetrics;
   soap: Record<SoapSectionKey, SoapSectionReview>;
-  overallRating?: number;
   signable?: boolean;
   reviewerComments?: string;
 };
@@ -114,8 +157,8 @@ export type SubmitReviewPayload = {
   transcript: TranscriptTurnReview[];
   soap: Record<SoapSectionKey, SoapSectionReview>;
   signable: boolean;
-  overallRating: number;
   reviewerComments: string;
   annotations: ReviewAnnotationPayload[];
+  transcriptReviewMetrics?: TranscriptReviewMetrics;
   submittedAt: string;
 };

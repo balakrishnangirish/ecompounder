@@ -9,6 +9,7 @@ import type {
   SoapSectionReview,
   SoapSectionKey,
   SubmitReviewPayload,
+  TranscriptReviewMetrics,
 } from "@/lib/reviews/types";
 
 export type AudioReviewFixture = {
@@ -16,6 +17,7 @@ export type AudioReviewFixture = {
   fileName: string;
   sourceLanguage?: string;
   targetLanguage: string;
+  translationLanguage?: string;
   numSpeakers?: number;
 };
 
@@ -133,6 +135,7 @@ function buildUnprocessedReviewCase(
     createdAt: startedAt.toISOString(),
     sourceLanguage: fixture.sourceLanguage,
     targetLanguage: fixture.targetLanguage,
+    translationLanguage: fixture.translationLanguage ?? fixture.targetLanguage,
     status: "ready_for_review",
     model: "pending processing",
     criticalFlagCount: 0,
@@ -141,8 +144,10 @@ function buildUnprocessedReviewCase(
     soapReviewStatus: "locked",
     audioUrl: `/api/reviews/${fixture.id}/audio`,
     modelMetadata: {
-      translationModel: "pending Sarvam processing",
-      diarizationModel: "pending Sarvam processing",
+      processingProvider: "sarvam",
+      transcriptionModel: "pending Model A processing",
+      translationModel: "pending Model A processing",
+      diarizationModel: "pending Model A processing",
       roleModel: "pending Groq processing",
       soapModel: "pending Groq processing",
       templateName: soapTemplateMetadata.templateName,
@@ -151,7 +156,6 @@ function buildUnprocessedReviewCase(
     },
     transcript: [],
     soap: buildEmptySoapReview(),
-    overallRating: 1,
     signable: false,
     reviewerComments: "",
   };
@@ -177,25 +181,72 @@ export function buildEmptySoapReview(): Record<SoapSectionKey, SoapSectionReview
   );
 }
 
-export function buildSubmitPayload(caseData: ReviewCase): SubmitReviewPayload {
+export function buildSubmitPayload(
+  caseData: ReviewCase,
+  transcriptReviewMetrics?: TranscriptReviewMetrics
+): SubmitReviewPayload {
+  const transcript = caseData.transcript.map((turn) => ({
+    ...turn,
+    verifiedPerfect: isVerifiedPerfectTurn(turn),
+  }));
   const annotations = [
-    ...caseData.transcript
+    ...transcript.flatMap((turn) =>
+      transcriptModelOutputsForTurn(turn)
+        .filter(
+          (output) =>
+            (output.errorTags || []).length > 0 ||
+            (output.severity || "none") !== "none"
+        )
+        .map((output) => ({
+          targetType: "translation" as const,
+          targetId: `${turn.id}:${output.modelKey}`,
+          errorTags: output.errorTags || [],
+          severity: output.severity || "none",
+          beforeText: output.text,
+          afterText:
+            turn.correctedTranslation && output.modelKey === turn.preferredModelOutput
+              ? turn.correctedTranslation
+              : output.text,
+          comment: turn.comment,
+        }))
+    ),
+    ...transcript
+      .filter((turn) => turn.reviewedRole !== turn.predictedRole)
+      .map((turn) => ({
+        targetType: "speaker_role" as const,
+        targetId: turn.id,
+        errorTags: [],
+        severity: "none" as const,
+        beforeText: turn.predictedRole,
+        afterText: turn.reviewedRole,
+        comment: turn.comment,
+      })),
+    ...transcript
       .filter(
         (turn) =>
-          turn.errorTags.length > 0 ||
-          turn.reviewedRole !== turn.predictedRole ||
-          turn.correctedTranslation !== null && turn.correctedTranslation !== undefined
+          turn.sourceTextNeedsCorrection &&
+          turn.correctedSourceText !== null &&
+          turn.correctedSourceText !== undefined &&
+          turn.correctedSourceText.trim() !== (turn.sourceText || "").trim()
       )
       .map((turn) => ({
-        targetType:
-          turn.reviewedRole !== turn.predictedRole
-            ? ("speaker_role" as const)
-            : ("translation" as const),
+        targetType: "source_transcription" as const,
         targetId: turn.id,
         errorTags: turn.errorTags,
         severity: turn.severity,
-        beforeText: turn.translatedText,
-        afterText: turn.correctedTranslation ?? turn.translatedText,
+        beforeText: turn.sourceText || "",
+        afterText: turn.correctedSourceText || "",
+        comment: turn.comment,
+      })),
+    ...transcript
+      .filter((turn) => Boolean(turn.preferredModelOutput))
+      .map((turn) => ({
+        targetType: "model_preference" as const,
+        targetId: turn.id,
+        errorTags: [],
+        severity: "none" as const,
+        beforeText: turn.modelOutputs?.map((output) => output.label).join(", "),
+        afterText: turn.preferredModelOutput || "",
         comment: turn.comment,
       })),
     ...soapSectionOrder
@@ -221,14 +272,64 @@ export function buildSubmitPayload(caseData: ReviewCase): SubmitReviewPayload {
   return {
     caseId: caseData.id,
     status: "completed",
-    transcript: caseData.transcript,
+    transcript,
     soap: caseData.soap,
     signable: Boolean(caseData.signable),
-    overallRating: caseData.overallRating || 1,
     reviewerComments: caseData.reviewerComments || "",
     annotations,
+    transcriptReviewMetrics,
     submittedAt: new Date().toISOString(),
   };
+}
+
+function isVerifiedPerfectTurn(turn: ReviewCase["transcript"][number]) {
+  const correctedTranslation = turn.correctedTranslation?.trim();
+  const correctedSourceText = turn.correctedSourceText?.trim();
+  const isTextUnchanged =
+    !correctedTranslation || correctedTranslation === turn.translatedText.trim();
+  const isSourceTextUnchanged =
+    !turn.sourceTextNeedsCorrection ||
+    !correctedSourceText ||
+    correctedSourceText === (turn.sourceText || "").trim();
+  const isRoleUnchanged = turn.reviewedRole === turn.predictedRole;
+  const hasNoModelPreference = !turn.preferredModelOutput;
+  const hasNoModelIssues = transcriptModelOutputsForTurn(turn).every(
+    (output) =>
+      (output.severity || "none") === "none" &&
+      (output.errorTags || []).length === 0
+  );
+
+  return (
+    isTextUnchanged &&
+    isSourceTextUnchanged &&
+    isRoleUnchanged &&
+    hasNoModelPreference &&
+    hasNoModelIssues
+  );
+}
+
+function transcriptModelOutputsForTurn(turn: ReviewCase["transcript"][number]) {
+  const outputs = turn.modelOutputs?.filter((output) => output.text.trim());
+  if (outputs && outputs.length > 0) return outputs;
+
+  return [
+    {
+      modelKey: "model_1",
+      label: "Model A",
+      text: turn.translatedText,
+      predictedRole: turn.predictedRole,
+      errorTags: turn.errorTags,
+      severity: turn.severity,
+    },
+    {
+      modelKey: "model_2",
+      label: "Model B",
+      text: turn.sourceText || "",
+      predictedRole: "Speaker" as const,
+      errorTags: [],
+      severity: "none" as const,
+    },
+  ];
 }
 
 function soapSectionText(value: unknown): string {

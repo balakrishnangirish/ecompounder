@@ -68,5 +68,3 @@ export async function POST(request: Request) {
     );
   }
 }
-// add this line temporarily
-console.log("DEPLOY FIX TEST");

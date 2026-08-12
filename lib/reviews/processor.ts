@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { mkdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "fs/promises";
 import os from "os";
 import path from "path";
 
@@ -29,6 +29,15 @@ import type {
 type DiarizedEntry = {
   speaker_id?: string;
   transcript?: string;
+  sourceTranscript?: string;
+  translatedText?: string;
+  source_transcript?: string;
+  original_transcript?: string;
+  input_transcript?: string;
+  transcription?: string;
+  translated_text?: string;
+  translated_transcript?: string;
+  translation?: string;
   start_time_seconds?: number;
   end_time_seconds?: number;
   language?: string;
@@ -48,7 +57,14 @@ type DiarizationResult = {
 
 type CachedDiarizationResult = DiarizationResult & {
   cachedAt?: string;
+  mode?: "codemix" | "transcribe" | "translate";
   raw?: unknown;
+};
+
+type CachedReviewCase = {
+  cacheVersion: 1;
+  cachedAt: string;
+  caseData: ReviewCase;
 };
 
 type ProcessedCache = {
@@ -57,8 +73,9 @@ type ProcessedCache = {
 };
 
 const processedCases = new Map<string, ProcessedCache>();
-const cachedDiarizationCaseIds = new Set(["rev-mp3-004"]);
 const localCacheDir = path.join(process.cwd(), "lib", "reviews", "cache");
+const SOURCE_TRANSCRIPT_MODE = "codemix" as const;
+const SOURCE_ALIGNMENT_VERSION = "timestamp-v1";
 
 export async function getProcessedReviewCase(id: string) {
   const baseCase = getReviewCase(id);
@@ -67,6 +84,20 @@ export async function getProcessedReviewCase(id: string) {
   const cached = processedCases.get(id);
   if (cached?.caseData) return cached.caseData;
   if (cached?.promise) return cached.promise;
+
+  const cachedCase = await readCachedReviewCase(id);
+  if (cachedCase) {
+    const repairedCase = await repairKnownSourceOffsetIfNeeded(
+      cachedCase,
+      baseCase.id
+    );
+    const refreshedCase = await refreshCachedSourceTranscriptIfNeeded(
+      repairedCase,
+      baseCase
+    );
+    processedCases.set(id, { caseData: refreshedCase });
+    return refreshedCase;
+  }
 
   const promise = processReviewCase(baseCase)
     .then((caseData) => {
@@ -98,23 +129,38 @@ async function processReviewCase(baseCase: ReviewCase): Promise<ReviewCase> {
         numSpeakers: getAudioFixture(baseCase.id)?.numSpeakers,
       })
   );
+  const transcriptionResult = await runStage("Sarvam transcription", () =>
+    transcribeMp3({
+      audioPath,
+      fileName: path.basename(audioPath),
+      reviewCaseId: baseCase.id,
+      numSpeakers: getAudioFixture(baseCase.id)?.numSpeakers,
+    })
+  );
+  const mergedEntries = mergeDiarizedEntries(
+    entries,
+    transcriptionResult.entries
+  );
   const speakers = Array.from(
-    new Set(entries.map((entry) => entry.speaker_id).filter(Boolean))
+    new Set(mergedEntries.map((entry) => entry.speaker_id).filter(Boolean))
   ) as string[];
   const roles = await runStage("speaker role inference", () =>
     inferSpeakerRoles(transcript, speakers)
   );
-  const turns = entriesToTurns(entries, roles);
+  const turns = entriesToTurns(mergedEntries, roles);
   const soap = await generateSoap(transcript, baseCase);
   const soapProvider = getConfiguredSoapProvider();
   const soapTemplateMetadata = getActiveSoapTemplateMetadata();
 
-  return {
+  const caseData: ReviewCase = {
     ...baseCase,
     model: `saaras:v3 -> ${soapProvider}`,
     status: "ready_for_review",
+    translationLanguage: baseCase.translationLanguage ?? baseCase.targetLanguage,
     turnCount: turns.length,
     modelMetadata: {
+      processingProvider: "sarvam",
+      transcriptionModel: `Sarvam saarAs v3 ${SOURCE_TRANSCRIPT_MODE} ${SOURCE_ALIGNMENT_VERSION} job ${transcriptionResult.jobId}`,
       translationModel: "Sarvam saarAs v3",
       diarizationModel: `Sarvam speech-to-text-translate job ${jobId} (${getSpeakerCountLabel(
         getAudioFixture(baseCase.id)?.numSpeakers
@@ -130,10 +176,13 @@ async function processReviewCase(baseCase: ReviewCase): Promise<ReviewCase> {
     },
     transcript: turns,
     soap,
-    overallRating: 1,
     signable: false,
     reviewerComments: "",
   };
+
+  await writeCachedReviewCase(baseCase.id, caseData);
+
+  return caseData;
 }
 
 async function diarizeAndTranslateMp3({
@@ -237,6 +286,84 @@ async function diarizeAndTranslateMp3({
   }
 }
 
+async function transcribeMp3({
+  audioPath,
+  fileName,
+  reviewCaseId,
+  numSpeakers,
+}: {
+  audioPath: string;
+  fileName: string;
+  reviewCaseId: string;
+  numSpeakers?: number;
+}): Promise<DiarizationResult> {
+  const cached = await readCachedTranscription(reviewCaseId);
+  if (cached) return cached;
+
+  const apiKey = process.env.API_KEY || process.env.SARVAM_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing API_KEY or SARVAM_API_KEY");
+  }
+
+  const workDir = path.join(os.tmpdir(), `review-transcribe-${randomUUID()}`);
+
+  try {
+    await mkdir(workDir, { recursive: true });
+
+    const client = new SarvamAIClient({
+      apiSubscriptionKey: apiKey,
+      timeoutInSeconds: 120,
+    });
+
+    const job = await client.speechToTextJob.createJob({
+      model: "saaras:v3",
+      mode: SOURCE_TRANSCRIPT_MODE,
+      withDiarization: true,
+      withTimestamps: true,
+      ...(Number.isFinite(numSpeakers) ? { numSpeakers } : {}),
+    });
+
+    await job.uploadFiles([audioPath]);
+    await job.start();
+
+    const status = await job.waitUntilComplete(5, 240);
+    if (status.job_state.toLowerCase() !== "completed") {
+      throw new Error(`Transcription job failed: ${status.job_state}`);
+    }
+
+    const outputDir = path.join(workDir, "outputs");
+    await job.downloadOutputs(outputDir);
+
+    const output = await readSarvamOutputJson(outputDir, fileName);
+    const entries = getEntries(output);
+    const transcript = formatDiarizedTranscript(entries) || getTranscript(output);
+
+    if (!transcript) {
+      throw new Error("No source transcript returned");
+    }
+
+    const result = {
+      jobId: job.jobId,
+      transcript,
+      entries:
+        entries.length > 0
+          ? entries
+          : transcriptToFallbackEntries(transcript),
+    };
+
+    await writeCachedTranscription(reviewCaseId, {
+      ...result,
+      cachedAt: new Date().toISOString(),
+      mode: SOURCE_TRANSCRIPT_MODE,
+      raw: output,
+    });
+
+    return result;
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
+
 function getSpeakerCountLabel(numSpeakers?: number) {
   return Number.isFinite(numSpeakers)
     ? `${numSpeakers} speakers requested`
@@ -246,8 +373,6 @@ function getSpeakerCountLabel(numSpeakers?: number) {
 async function readCachedDiarization(
   reviewCaseId: string
 ): Promise<DiarizationResult | null> {
-  if (!cachedDiarizationCaseIds.has(reviewCaseId)) return null;
-
   try {
     const cached = JSON.parse(
       await readFile(getDiarizationCachePath(reviewCaseId), "utf8")
@@ -275,8 +400,6 @@ async function writeCachedDiarization(
   reviewCaseId: string,
   result: CachedDiarizationResult
 ) {
-  if (!cachedDiarizationCaseIds.has(reviewCaseId)) return;
-
   await mkdir(localCacheDir, { recursive: true });
   await writeFile(
     getDiarizationCachePath(reviewCaseId),
@@ -287,6 +410,196 @@ async function writeCachedDiarization(
 
 function getDiarizationCachePath(reviewCaseId: string) {
   return path.join(localCacheDir, `${reviewCaseId}.sarvam.json`);
+}
+
+async function readCachedTranscription(
+  reviewCaseId: string
+): Promise<DiarizationResult | null> {
+  try {
+    const cached = JSON.parse(
+      await readFile(getTranscriptionCachePath(reviewCaseId), "utf8")
+    ) as CachedDiarizationResult;
+
+    if (!cached.transcript || !Array.isArray(cached.entries)) {
+      return null;
+    }
+
+    return {
+      jobId: cached.jobId || `local-transcribe-cache-${reviewCaseId}`,
+      transcript: cached.transcript,
+      entries: cached.entries,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function writeCachedTranscription(
+  reviewCaseId: string,
+  result: CachedDiarizationResult
+) {
+  await mkdir(localCacheDir, { recursive: true });
+  await writeFile(
+    getTranscriptionCachePath(reviewCaseId),
+    `${JSON.stringify(result, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+function getTranscriptionCachePath(reviewCaseId: string) {
+  return path.join(localCacheDir, `${reviewCaseId}.sarvam-transcribe.json`);
+}
+
+async function readCachedReviewCase(
+  reviewCaseId: string
+): Promise<ReviewCase | null> {
+  try {
+    const cached = JSON.parse(
+      await readFile(getReviewCaseCachePath(reviewCaseId), "utf8")
+    ) as CachedReviewCase;
+
+    if (cached.cacheVersion !== 1 || !cached.caseData?.id) {
+      return null;
+    }
+
+    return cached.caseData;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function writeCachedReviewCase(
+  reviewCaseId: string,
+  caseData: ReviewCase
+) {
+  await mkdir(localCacheDir, { recursive: true });
+  await writeFile(
+    getReviewCaseCachePath(reviewCaseId),
+    `${JSON.stringify(
+      {
+        cacheVersion: 1,
+        cachedAt: new Date().toISOString(),
+        caseData,
+      } satisfies CachedReviewCase,
+      null,
+      2
+    )}\n`,
+    "utf8"
+  );
+}
+
+function getReviewCaseCachePath(reviewCaseId: string) {
+  return path.join(localCacheDir, `${reviewCaseId}.review-case.json`);
+}
+
+async function refreshCachedSourceTranscriptIfNeeded(
+  cachedCase: ReviewCase,
+  baseCase: ReviewCase
+) {
+  if (isCurrentSourceCache(cachedCase)) {
+    return cachedCase;
+  }
+
+  const audioPath = getAudioFilePath(baseCase.id);
+  if (!audioPath) {
+    return cachedCase;
+  }
+
+  const transcriptionResult = await readCachedTranscription(baseCase.id);
+  if (!transcriptionResult) {
+    return cachedCase;
+  }
+
+  const refreshedCase: ReviewCase = {
+    ...cachedCase,
+    modelMetadata: {
+      ...cachedCase.modelMetadata,
+      transcriptionModel: `Sarvam saarAs v3 ${SOURCE_TRANSCRIPT_MODE} ${SOURCE_ALIGNMENT_VERSION} job ${transcriptionResult.jobId}`,
+    },
+    transcript: cachedCase.transcript.map((turn) => ({
+      ...turn,
+      sourceText: sourceTextForTurn(turn, transcriptionResult.entries),
+    })),
+  };
+
+  await writeCachedReviewCase(baseCase.id, refreshedCase);
+  return refreshedCase;
+}
+
+async function repairKnownSourceOffsetIfNeeded(
+  cachedCase: ReviewCase,
+  reviewCaseId: string
+) {
+  if (
+    cachedCase.id !== "rev-mp3-001" ||
+    isCurrentSourceCache(cachedCase) ||
+    !cachedCase.modelMetadata.transcriptionModel?.includes(
+      `saarAs v3 ${SOURCE_TRANSCRIPT_MODE}`
+    )
+  ) {
+    return cachedCase;
+  }
+
+  const offsetStartIndex = 45;
+  if (cachedCase.transcript.length <= offsetStartIndex) {
+    return cachedCase;
+  }
+
+  const repairedCase: ReviewCase = {
+    ...cachedCase,
+    modelMetadata: {
+      ...cachedCase.modelMetadata,
+      transcriptionModel: `${cachedCase.modelMetadata.transcriptionModel} ${SOURCE_ALIGNMENT_VERSION}`,
+    },
+    transcript: cachedCase.transcript.map((turn, index, turns) => {
+      if (index < offsetStartIndex) return turn;
+
+      return {
+        ...turn,
+        sourceText: turns[index - 1]?.sourceText || turn.sourceText || "",
+      };
+    }),
+  };
+
+  await writeCachedReviewCase(reviewCaseId, repairedCase);
+  return repairedCase;
+}
+
+function isCurrentSourceCache(reviewCase: ReviewCase) {
+  return reviewCase.modelMetadata.transcriptionModel?.includes(
+    SOURCE_ALIGNMENT_VERSION
+  );
+}
+
+async function readSarvamOutputJson(outputDir: string, inputFileName: string) {
+  const preferredPath = path.join(outputDir, `${inputFileName}.json`);
+
+  try {
+    return JSON.parse(await readFile(preferredPath, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const outputFiles = (await readdir(outputDir)).filter((fileName) =>
+    fileName.endsWith(".json")
+  );
+  if (outputFiles.length === 0) {
+    throw new Error("Sarvam did not return a JSON output file");
+  }
+
+  return JSON.parse(
+    await readFile(path.join(outputDir, outputFiles[0]), "utf8")
+  );
 }
 
 async function inferSpeakerRoles(
@@ -397,11 +710,12 @@ function entriesToTurns(
   roles: Record<string, SpeakerRole>
 ): TranscriptTurnReview[] {
   return entries
-    .filter((entry) => entry.transcript?.trim())
+    .filter((entry) => getSourceTranscript(entry) || getTranslatedText(entry))
     .map((entry, index) => {
       const speakerId = entry.speaker_id || "SPEAKER";
       const role = roles[speakerId] || "Speaker";
-      const text = entry.transcript?.trim() || "";
+      const sourceText = getSourceTranscript(entry);
+      const translatedText = getTranslatedText(entry);
 
       return {
         id: `turn-${index + 1}`,
@@ -411,12 +725,148 @@ function entriesToTurns(
         speakerId,
         predictedRole: role,
         reviewedRole: role,
-        translatedText: text,
+        sourceText,
+        sourceTextNeedsCorrection: false,
+        correctedSourceText: null,
+        translatedText,
         correctedTranslation: null,
+        modelOutputs: [
+          {
+            modelKey: "model_1",
+            label: "Model A",
+            text: translatedText,
+            predictedRole: role,
+            errorTags: [],
+            severity: "none",
+          },
+          {
+            modelKey: "model_2",
+            label: "Model B",
+            text: sourceText,
+            predictedRole: "Speaker",
+            errorTags: [],
+            severity: "none",
+          },
+        ],
+        preferredModelOutput: null,
         errorTags: [],
         severity: "none",
       };
     });
+}
+
+function mergeDiarizedEntries(
+  translatedEntries: DiarizedEntry[],
+  transcribedEntries: DiarizedEntry[]
+) {
+  if (translatedEntries.length === 0) {
+    return transcribedEntries.map((entry) => ({
+      ...entry,
+      sourceTranscript: getTranslatedText(entry),
+    }));
+  }
+
+  return translatedEntries.map((entry) => {
+    const sourceTranscript = sourceTextForTurn(
+      {
+        startTimeSeconds: entry.start_time_seconds,
+        endTimeSeconds: entry.end_time_seconds,
+        speakerId: entry.speaker_id || "",
+      },
+      transcribedEntries
+    );
+
+    return {
+      ...entry,
+      sourceTranscript,
+      translatedText: getTranslatedText(entry),
+    };
+  });
+}
+
+function sourceTextForTurn(
+  turn: Pick<TranscriptTurnReview, "startTimeSeconds" | "endTimeSeconds" | "speakerId">,
+  sourceEntries: DiarizedEntry[]
+) {
+  const sourceEntry = findBestSourceEntry(turn, sourceEntries);
+  return sourceEntry ? getTranslatedText(sourceEntry) : "";
+}
+
+function findBestSourceEntry(
+  turn: Pick<TranscriptTurnReview, "startTimeSeconds" | "endTimeSeconds" | "speakerId">,
+  sourceEntries: DiarizedEntry[]
+) {
+  if (
+    turn.startTimeSeconds === undefined ||
+    turn.endTimeSeconds === undefined
+  ) {
+    return null;
+  }
+
+  let bestEntry: DiarizedEntry | null = null;
+  let bestScore = 0;
+
+  for (const entry of sourceEntries) {
+    const overlap = timeOverlapSeconds(
+      turn.startTimeSeconds,
+      turn.endTimeSeconds,
+      entry.start_time_seconds,
+      entry.end_time_seconds
+    );
+    if (overlap <= 0) continue;
+
+    const speakerBoost = speakersMatch(turn.speakerId, entry.speaker_id)
+      ? 0.25
+      : 0;
+    const score = overlap + speakerBoost;
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestEntry = entry;
+    }
+  }
+
+  return bestEntry;
+}
+
+function timeOverlapSeconds(
+  startA: number,
+  endA: number,
+  startB?: number,
+  endB?: number
+) {
+  if (startB === undefined || endB === undefined) return 0;
+  return Math.max(0, Math.min(endA, endB) - Math.max(startA, startB));
+}
+
+function speakersMatch(left: string, right?: string) {
+  return normalizeSpeakerId(left) === normalizeSpeakerId(right || "");
+}
+
+function normalizeSpeakerId(value: string) {
+  return value.replace(/^speaker_/i, "");
+}
+
+function getSourceTranscript(entry: DiarizedEntry) {
+  return (
+    entry.sourceTranscript ||
+    entry.source_transcript ||
+    entry.original_transcript ||
+    entry.input_transcript ||
+    entry.transcription ||
+    ""
+  ).trim();
+}
+
+function getTranslatedText(entry: DiarizedEntry) {
+  return (
+    entry.translatedText ||
+    entry.translated_text ||
+    entry.translated_transcript ||
+    entry.translation ||
+    entry.transcript ||
+    ""
+  ).trim();
 }
 
 function soapSection(
