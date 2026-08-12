@@ -13,7 +13,15 @@ export type SpeakerRole =
   | "Other"
   | "Unknown";
 
-export type ErrorSeverity = "none" | "low" | "medium" | "high" | "critical";
+export const severityOptions = [
+  "none",
+  "low",
+  "medium",
+  "high",
+  "critical",
+] as const;
+
+export type ErrorSeverity = (typeof severityOptions)[number];
 
 export type ReviewTargetType =
   | "source_transcription"
@@ -24,19 +32,17 @@ export type ReviewTargetType =
 
 export type SoapSectionKey = string;
 
-export type ReviewErrorTag =
-  | "meaning_changed"
-  | "omitted_clinical_detail"
-  | "incorrect_medication"
-  | "incorrect_dose"
-  | "incorrect_symptom"
-  | "incorrect_negation"
-  | "hallucinated_detail"
-  | "unclear_speech"
-  | "speaker_mislabeled"
-  | "unsupported_by_transcript"
-  | "wrong_soap_section"
-  | "missing_safety_netting";
+export const reviewErrorTagOptions = [
+  "CLINICAL_NEGATION_FLIPPED",
+  "CLINICAL_DATA_MUTATION",
+  "MEDICAL_ENTITY_WRONG",
+  "INFORMATION_OMISSION",
+  "INFORMATION_HALLUCINATION",
+  "SPEAKER_MISLABELED",
+  "SRC_AUDIO_UNCLEAR",
+] as const;
+
+export type ReviewErrorTag = (typeof reviewErrorTagOptions)[number];
 
 export type ReviewModelMetadata = {
   processingProvider?: "sarvam" | "aws_transcribe_medical" | "unknown";
