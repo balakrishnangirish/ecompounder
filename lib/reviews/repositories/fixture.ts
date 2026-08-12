@@ -31,7 +31,21 @@ export const fixtureReviewRepository: ReviewRepository = {
   },
 
   async getReviewCase(id) {
-    return submittedReviewCases.get(id) ?? getProcessedReviewCase(id);
+    const submittedCase = submittedReviewCases.get(id);
+    if (submittedCase) return submittedCase;
+
+    try {
+      return await getProcessedReviewCase(id);
+    } catch (error) {
+      if (isMissingLocalFixtureAudioError(error)) {
+        console.warn(
+          `Review fixture audio is unavailable for ${id}; returning unprocessed fixture case.`
+        );
+        return getReviewCase(id) ?? null;
+      }
+
+      throw error;
+    }
   },
 
   async getReviewAudioSource(id) {
@@ -85,3 +99,12 @@ export const fixtureReviewRepository: ReviewRepository = {
     };
   },
 };
+
+function isMissingLocalFixtureAudioError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+
+  return (
+    ("code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") ||
+    error.message.includes("ENOENT: no such file or directory")
+  );
+}

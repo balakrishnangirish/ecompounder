@@ -500,6 +500,16 @@ export function ReviewWorkbench({ caseId }: { caseId: string }) {
                 isTranscriptReviewComplete ? "bg-slate-50/80" : "bg-sky-50/80"
               }`}
             >
+              {reviewCase.transcript.length === 0 ? (
+                <div className="rounded-md border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-600 shadow-sm">
+                  <h3 className="text-[15px] font-semibold leading-5 text-slate-900">
+                    No transcript data available
+                  </h3>
+                  <p className="mt-2">
+                    This review case is waiting for processed transcript and SOAP data.
+                  </p>
+                </div>
+              ) : null}
               {reviewCase.transcript.map((turn, index) => {
                 const nextTurn = reviewCase.transcript[index + 1];
                 const isCompletedTurn = index < activeTurnIndex;
@@ -585,7 +595,11 @@ export function ReviewWorkbench({ caseId }: { caseId: string }) {
                     <Check className="h-4 w-4" />
                     {isTranscriptReviewComplete ? "Transcript Completed" : "Complete Transcript"}
                   </Button>
-                  {transcriptValidationErrors.length > 0 ? (
+                  {turnCount === 0 ? (
+                    <span className="max-w-xs text-xs text-slate-500">
+                      Transcript data is not available for this case.
+                    </span>
+                  ) : transcriptValidationErrors.length > 0 ? (
                     <span className="max-w-xs text-xs text-red-700">
                       {formatValidationSummary(
                         transcriptValidationErrors,
