@@ -28,3 +28,8 @@ node_modules
 # audio files
 *.mp3
 *.wav
+
+# local OS/build artifacts
+.DS_Store
+*.tsbuildinfo
+review-artifacts/
