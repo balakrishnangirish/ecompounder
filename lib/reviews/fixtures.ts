@@ -134,7 +134,6 @@ function buildUnprocessedReviewCase(
     sourceLanguage: fixture.sourceLanguage,
     targetLanguage: fixture.targetLanguage,
     status: "ready_for_review",
-    assignedReviewer: "Dr. Meera Shah",
     model: "pending processing",
     criticalFlagCount: 0,
     turnCount: 0,
