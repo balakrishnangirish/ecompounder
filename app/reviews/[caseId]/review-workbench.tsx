@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Check,
   ChevronLeft,
+  CircleHelp,
   ClipboardCheck,
   FileText,
   Lock,
@@ -17,10 +18,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  buildSubmitPayload,
+  reviewErrorTagDescriptions,
   reviewErrorTagLabels,
+  reviewErrorTagOptions,
   severityLabels,
-} from "@/lib/reviews/fixtures";
+  severityOptions,
+} from "@/lib/reviews/constants";
+import { buildSubmitPayload } from "@/lib/reviews/fixtures";
 import { getReviewCaseById, submitReview } from "@/lib/reviews/client";
 import { reviewStatusLabel } from "@/lib/reviews/status";
 import primaryCareSoapTemplate from "@/lib/soap/templates/primary-care-soap.v1.json";
@@ -96,29 +100,6 @@ const roleOptions: SpeakerRole[] = [
   "Unknown",
 ];
 
-const severityOptions: ErrorSeverity[] = [
-  "none",
-  "low",
-  "medium",
-  "high",
-  "critical",
-];
-
-const tagOptions: ReviewErrorTag[] = [
-  "meaning_changed",
-  "incorrect_negation",
-  "omitted_clinical_detail",
-  "incorrect_symptom",
-  "incorrect_medication",
-  "incorrect_dose",
-  "hallucinated_detail",
-  "unsupported_by_transcript",
-  "unclear_speech",
-  "speaker_mislabeled",
-  "wrong_soap_section",
-  "missing_safety_netting",
-];
-
 const pageTitleClassName = "text-[22px] font-semibold leading-7 tracking-normal";
 const panelTitleClassName =
   "flex items-center gap-2 text-[17px] font-semibold leading-6 tracking-normal";
@@ -128,6 +109,14 @@ const fieldLabelClassName = "text-[13px] font-medium leading-5 text-slate-500";
 const helperTextClassName = "text-[13px] leading-5 text-slate-500";
 const aiGeneratedBoxClassName =
   "rounded-md border border-slate-100 bg-slate-50/80 p-3 text-sm leading-6 text-slate-500";
+
+const severitySelectedClassNames: Record<ErrorSeverity, string> = {
+  none: "bg-emerald-50 text-emerald-700",
+  low: "bg-sky-50 text-sky-700",
+  medium: "bg-amber-50 text-amber-800",
+  high: "bg-orange-50 text-orange-800",
+  critical: "bg-red-50 text-red-700",
+};
 
 export function ReviewWorkbench({ caseId }: { caseId: string }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -959,7 +948,9 @@ function ModelOutputReviewPanel({
       />
 
       <div className="mt-3">
-        <div className={`mb-2 ${fieldLabelClassName}`}>Error tags</div>
+        <div className={`mb-2 ${fieldLabelClassName}`}>
+          <ErrorTagsTitle />
+        </div>
         <ErrorTagsRail tags={tags} disabled={disabled} onTagsChange={onTagsChange} />
       </div>
 
@@ -993,7 +984,7 @@ function PreferredModelControl({
 }) {
   const options = [
     ...outputs.flatMap((output, index) => [
-      ...(index === 1 ? [{ value: "tie", label: "Tie / both ok" }] : []),
+      ...(index === 1 ? [{ value: "tie", label: "Tie" }] : []),
       {
         value: output.modelKey,
         label: `${output.label} better`,
@@ -1017,7 +1008,7 @@ function PreferredModelControl({
               disabled
                 ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
                 : isSelected
-                ? "border-teal-200 bg-teal-50 text-teal-700"
+                ? "border-blue-200 bg-blue-50 text-blue-700"
                 : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
@@ -1110,7 +1101,7 @@ function ErrorTagsRail({
 
   return (
     <div className="flex flex-wrap gap-1.5">
-      {tagOptions.map((tag) => {
+      {reviewErrorTagOptions.map((tag) => {
         const isSelected = tags.includes(tag);
 
         return (
@@ -1136,6 +1127,51 @@ function ErrorTagsRail({
   );
 }
 
+function ErrorTagsTitle() {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span>Error Tags</span>
+      <span className="group relative inline-flex">
+        <button
+          type="button"
+          aria-label="Show error tag descriptions"
+          className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        >
+          <CircleHelp className="h-3.5 w-3.5" />
+        </button>
+        <span className="pointer-events-none absolute left-0 top-6 z-30 hidden w-[min(26rem,calc(100vw-2rem))] rounded-md border border-slate-200 bg-white p-2 text-left shadow-lg group-hover:block group-focus-within:block">
+          <span className="block overflow-hidden rounded-md border border-slate-200">
+            <table className="w-full border-collapse text-[11px]">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="w-32 border-b border-slate-200 px-2 py-1.5 text-left font-semibold">
+                    Label
+                  </th>
+                  <th className="border-b border-slate-200 px-2 py-1.5 text-left font-semibold">
+                    Description
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-600">
+                {reviewErrorTagOptions.map((tag) => (
+                  <tr key={tag} className="border-t border-slate-100">
+                    <td className="align-top px-2 py-1.5 font-medium leading-4 text-slate-800">
+                      {reviewErrorTagLabels[tag]}
+                    </td>
+                    <td className="align-top px-2 py-1.5 leading-4">
+                      {reviewErrorTagDescriptions[tag]}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
 function SeverityRail({
   severity,
   disabled = false,
@@ -1149,10 +1185,6 @@ function SeverityRail({
     <div className="grid overflow-hidden rounded-md border border-slate-200 bg-white p-1 sm:grid-cols-5">
       {severityOptions.map((option) => {
         const isSelected = option === severity;
-        const selectedClassName =
-          option === "none"
-            ? "bg-teal-50 text-teal-700"
-            : "bg-red-50 text-red-700";
 
         return (
           <button
@@ -1164,7 +1196,7 @@ function SeverityRail({
               disabled
                 ? "cursor-not-allowed text-slate-400"
                 : isSelected
-                ? selectedClassName
+                ? severitySelectedClassNames[option]
                 : "text-slate-600 hover:bg-slate-50"
             }`}
           >
@@ -1489,10 +1521,10 @@ function ReviewControls({
     <div className="mt-3 space-y-3 border-t border-slate-100 pt-3">
       <div>
         <div className={`mb-2 ${fieldLabelClassName}`}>
-          Error Tags
+          <ErrorTagsTitle />
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {tagOptions.map((tag) => {
+          {reviewErrorTagOptions.map((tag) => {
             const isSelected = tags.includes(tag);
 
             return (
@@ -1540,7 +1572,7 @@ function ReviewControls({
                   disabled
                     ? "cursor-not-allowed text-slate-400"
                     : isSelected
-                    ? "bg-white text-slate-950 shadow-sm"
+                    ? `${severitySelectedClassNames[option]} shadow-sm`
                     : "text-slate-600 hover:bg-white/70"
                 }`}
               >

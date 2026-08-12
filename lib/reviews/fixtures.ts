@@ -2,10 +2,8 @@ import path from "path";
 
 import primaryCareSoapTemplate from "@/lib/soap/templates/primary-care-soap.v1.json";
 import type {
-  ErrorSeverity,
   ReviewCase,
   ReviewCaseSummary,
-  ReviewErrorTag,
   SoapSectionReview,
   SoapSectionKey,
   SubmitReviewPayload,
@@ -19,29 +17,6 @@ export type AudioReviewFixture = {
   targetLanguage: string;
   translationLanguage?: string;
   numSpeakers?: number;
-};
-
-export const reviewErrorTagLabels: Record<ReviewErrorTag, string> = {
-  meaning_changed: "Meaning changed",
-  omitted_clinical_detail: "Omitted detail",
-  incorrect_medication: "Medication",
-  incorrect_dose: "Dose",
-  incorrect_symptom: "Symptom",
-  incorrect_negation: "Negation",
-  hallucinated_detail: "Hallucination",
-  unclear_speech: "Unclear speech",
-  speaker_mislabeled: "Speaker label",
-  unsupported_by_transcript: "Unsupported",
-  wrong_soap_section: "Wrong section",
-  missing_safety_netting: "Safety netting",
-};
-
-export const severityLabels: Record<ErrorSeverity, string> = {
-  none: "None",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  critical: "Critical",
 };
 
 const soapTemplate = primaryCareSoapTemplate;
